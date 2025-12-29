@@ -1,7 +1,7 @@
 # Generative-Multimodal-Recommendation (青云)
 > “好风凭借力，送我上青云”——《临江仙・柳絮》
 <div align="center">
-  <a href=""><img width="300px" height="auto" src="./images/qingyun.png"></a>
+  <a href=""><img width="300px" height="auto" src="./GenMMRec/images/qingyun.png"></a>
 </div>
 
 > Awesome Research on Generative Multimodal Recommendation: A Comprehensive Survey
