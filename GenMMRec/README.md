@@ -1,9 +1,4 @@
-# MMRec
-
-<div align="center">
-  <a href=""><img width="300px" height="auto" src="./images/qingyun.png"></a>
-</div>
-
+# Qingyun v0.1 are based on MMRec.
 
 
 ## Supported Models
