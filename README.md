@@ -5,6 +5,24 @@
 > 
 ![GenRec](https://img.shields.io/badge/Survey-GenMMRec-orange) ![License](https://img.shields.io/badge/License-MIT-B39DDB) ![python](https://img.shields.io/badge/python-3.8+-blue) ![pytorch](https://img.shields.io/badge/pytorch-2.0-FFA000) ![Stars](https://img.shields.io/github/stars/orangeheyue/Generative-Multimodal-Recommendation?style=social)
 
+## Run the Code
+1. Clone the repository
+```bash
+git clone 
+```
+2. Install dependencies
+```bash
+pip install -r requirements.txt
+```
+3. Run the code
+```bash
+cd MMRec/src
+python main.py --model DiffMM --dataset <your_dataset_name>
+or
+python run.py --config configs/diffmm.yaml
+```
+
+
 
 ## Survey Papers
 - [A Review of Modern Recommender Systems Using Generative Models (Gen-RecSys)](https://dl.acm.org/doi/pdf/10.1145/3637528.3671474), KDD 24
