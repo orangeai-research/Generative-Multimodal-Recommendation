@@ -1,18 +1,10 @@
 # MMRec
 
 <div align="center">
-  <a href="https://github.com/enoche/MultimodalRecSys"><img width="300px" height="auto" src="https://github.com/enoche/MMRec/blob/master/images/logo.png"></a>
+  <a href=""><img width="300px" height="auto" src="./images/qingyun.png"></a>
 </div>
 
 
-$\text{MMRec}$: A modern <ins>M</ins>ulti<ins>M</ins>odal <ins>Rec</ins>ommendation toolbox that simplifies your research [arXiv](https://arxiv.org/abs/2302.03497).  
-:point_right: Check our [comprehensive survey on MMRec, arXiv](https://arxiv.org/abs/2302.04473).   
-:point_right: Check the awesome [multimodal recommendation resources](https://github.com/enoche/MultimodalRecSys).  
-
-## Toolbox
-<p>
-<img src="./images/MMRec.png" width="500">
-</p>
 
 ## Supported Models
 source code at: `src\models`
@@ -45,6 +37,14 @@ source code at: `src\models`
 
 #### Please consider to cite our paper if this framework helps you, thanks:
 ```
+@inproceedings{he2025flip,
+  title={Flip is Better than Noise: Unbiased Interest Generation for Multimedia Recommendation},
+  author={He, Yue and Xie, Jingxi and Li, Fengling and Zhu, Lei and Li, Jingjing},
+  booktitle={Proceedings of the 33rd ACM International Conference on Multimedia},
+  pages={6298--6306},
+  year={2025}
+}
+
 @inproceedings{zhou2023bootstrap,
 author = {Zhou, Xin and Zhou, Hongyu and Liu, Yong and Zeng, Zhiwei and Miao, Chunyan and Wang, Pengwei and You, Yuan and Jiang, Feijun},
 title = {Bootstrap Latent Representations for Multi-Modal Recommendation},
