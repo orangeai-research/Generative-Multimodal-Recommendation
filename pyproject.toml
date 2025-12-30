@@ -1,0 +1,34 @@
+[project]
+name = "generative-multimodal-recommendation"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+# ⚠️ 关键：必须限制在 3.12 以下，推荐 3.10 或 3.9
+requires-python = "==3.10.*"
+dependencies = [
+    "lmdb>=1.7.5",
+    "matplotlib<=3.9.4",  # 直接锁死回旧版本
+    "numpy==1.22.4",    # 直接锁死回旧版本
+    "pandas>=1.5.0",    # 配合旧 numpy 没问题
+    "pyyaml>=6.0.1",
+    "scipy==1.7.3",      # 直接锁死回旧版本
+    "torch==2.0.1+cu118",     # PyTorch 2.0
+    "torchvision==0.15.2+cu118",
+    "torch-scatter==2.1.1",  # 显式指定这个版本
+]
+
+
+# +cu118 的版本
+[[tool.uv.index]]
+name = "pytorch-cu118"
+url = "https://download.pytorch.org/whl/cu118"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu118" }]
+torchvision = [{ index = "pytorch-cu118" }]
+
+#直接指定 torch-scatter 的下载链接 (针对 Linux, Python 3.10, Torch 2.0.1, CUDA 11.8)
+torch-scatter = [
+    { url = "https://data.pyg.org/whl/torch-2.0.0%2Bcu118/torch_scatter-2.1.1%2Bpt20cu118-cp310-cp310-linux_x86_64.whl" }
+]
