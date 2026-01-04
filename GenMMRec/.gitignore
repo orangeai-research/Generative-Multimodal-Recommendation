@@ -133,3 +133,5 @@ dmypy.json
 
 data/
 .pdf
+wandb/
+comparison_logs/

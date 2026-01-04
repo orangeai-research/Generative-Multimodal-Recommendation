@@ -15,6 +15,13 @@ from utils.utils import init_seed, get_model, get_trainer, dict2str
 import platform
 import os
 
+try:
+    import wandb
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
+    print("wandb not installed. Install with: pip install wandb")
+
 
 def quick_start(model, dataset, config_dict, save_model=True, mg=False):
     # merge config dict
@@ -68,6 +75,40 @@ def quick_start(model, dataset, config_dict, save_model=True, mg=False):
         logger.info('========={}/{}: Parameters:{}={}======='.format(
             idx+1, total_loops, config['hyper_parameters'], hyper_tuple))
 
+        # Initialize wandb for this run
+        use_wandb = config['use_wandb'] and WANDB_AVAILABLE
+        if use_wandb:
+            # Create run name
+            run_name = f"{config['model']}_{config['dataset']}_seed{config['seed']}"
+            if len(hyper_tuple) > 1:  # Has hyperparameters beyond seed
+                param_str = "_".join([f"{k}{v}" for k, v in zip(config['hyper_parameters'][1:], hyper_tuple[1:])])
+                run_name += f"_{param_str}"
+
+            # Prepare config dict for wandb (exclude non-serializable objects)
+            wandb_config = {}
+            for k, v in config.final_config_dict.items():
+                # Skip non-serializable objects like torch.device
+                if k == 'device':
+                    wandb_config[k] = str(v)
+                elif not callable(v):
+                    try:
+                        # Try to convert to JSON-serializable type
+                        wandb_config[k] = v
+                    except:
+                        wandb_config[k] = str(v)
+
+            # Initialize wandb
+            wandb_project = config['wandb_project'] if 'wandb_project' in config and config['wandb_project'] else 'GenMMRec'
+            wandb.init(
+                project=wandb_project,
+                name=run_name,
+                config=wandb_config,
+                reinit=True,  # Allow multiple runs in same script
+                tags=[config['model'], config['dataset']],
+                notes=f"Training {config['model']} on {config['dataset']}"
+            )
+            logger.info(f"W&B run initialized: {run_name}")
+
         # set random state of dataloader
         train_data.pretrain_setup()
         # model loading and initialization
@@ -82,6 +123,21 @@ def quick_start(model, dataset, config_dict, save_model=True, mg=False):
         best_valid_score, best_valid_result, best_test_upon_valid = trainer.fit(train_data, valid_data=valid_data, test_data=test_data, saved=save_model)
         #########
         hyper_ret.append((hyper_tuple, best_valid_result, best_test_upon_valid))
+
+        # Log final results to wandb
+        if use_wandb:
+            wandb.log({
+                'best_valid_score': best_valid_score,
+                **{f'valid/{k}': v for k, v in best_valid_result.items()},
+                **{f'test/{k}': v for k, v in best_test_upon_valid.items()}
+            })
+            # Create summary
+            wandb.run.summary.update({
+                'best_valid_score': best_valid_score,
+                **{f'final_valid_{k}': v for k, v in best_valid_result.items()},
+                **{f'final_test_{k}': v for k, v in best_test_upon_valid.items()}
+            })
+            wandb.finish()
 
         # save best test
         if best_test_upon_valid[val_metric] > best_test_value:

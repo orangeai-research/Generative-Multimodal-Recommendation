@@ -15,6 +15,7 @@ dependencies = [
     "torch==2.0.1+cu118",     # PyTorch 2.0
     "torchvision==0.15.2+cu118",
     "torch-scatter==2.1.1",  # 显式指定这个版本
+    "wandb>=0.23.1",
 ]
 
 
