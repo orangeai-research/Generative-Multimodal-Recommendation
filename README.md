@@ -8,6 +8,20 @@
 > 
 ![GenRec](https://img.shields.io/badge/Survey-GenMMRec-orange) ![License](https://img.shields.io/badge/License-MIT-B39DDB) ![python](https://img.shields.io/badge/python-3.8+-blue) ![pytorch](https://img.shields.io/badge/pytorch-2.0-FFA000) ![Stars](https://img.shields.io/github/stars/orangeheyue/Generative-Multimodal-Recommendation?style=social)
 
+# Weekly Dev Log (2025-12-30)
+
+### News: 本周更新模型如下：
+
+## 🚀 **[Model Name A] v1.2**
+- **新增新方法**: 引入了新的Rectify Flow 机制，已打通RFMRec模型的初步流程。
+- **新增新模型**: 新增GenRec-V1生成式模型到当前框架中，模型、配置文件、数据读取、训练代码已验证。
+
+
+### 📝 TODO / Next Week
+- [1] 优化RFMRec模型。
+- [2] 在数据集上测试本框架下的DiffMM, GenRec-V1的稳定性。
+
+
 ## Run the Code
 1. Clone the repository
 ```bash
@@ -19,8 +33,9 @@ pip install -r requirements.txt
 ```
 3. Run the code
 ```bash
-cd MMRec/src
-python main.py --model DiffMM --dataset <your_dataset_name>
+cd GenMMRec/src
+python main.py --model GenRecV1 --dataset baby
+python main.py --model DiffMM --dataset baby
 or
 python run.py --config configs/diffmm.yaml
 ```

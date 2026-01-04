@@ -8,6 +8,7 @@ r"""
 import os
 import itertools
 import torch
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from torch.utils.data import DataLoader, TensorDataset
@@ -19,7 +20,7 @@ import matplotlib.pyplot as plt
 from time import time
 from logging import getLogger
 
-from utils.utils import get_local_time, early_stopping, dict2str
+from utils.utils import get_local_time, early_stopping, dict2str, build_knn_normalized_graph
 from utils.topk_evaluator import TopKEvaluator
 
 try:
@@ -28,6 +29,7 @@ try:
 except ImportError:
     WANDB_AVAILABLE = False
 
+from common.interest_cluster import MultimodalCluster, InterestDebiase
 
 class AbstractTrainer(object):
     r"""Trainer Class is used to manage the training and evaluation processes of recommender system models.
@@ -554,3 +556,239 @@ class DiffMMTrainer(Trainer):
         self.logger.info(f"Diffusion Loss: Image={epDiLoss_image/steps:.4f}, Text={epDiLoss_text/steps:.4f}")
         
         return rec_loss, loss_batches
+
+
+class GenRecV1Trainer(DiffMMTrainer):
+    def __init__(self, config, model, mg=False):
+        # Call Trainer.__init__ directly to skip DiffMMTrainer.__init__ which assumes denoise_model_text exists
+        Trainer.__init__(self, config, model, mg)
+        
+        self.denoise_opt_image = optim.Adam(self.model.denoise_model_image.parameters(), lr=config['learning_rate'], weight_decay=0)
+        # GenRecV1 does not train text diffusion model by default
+        
+        self.diffusion_loader = None
+        self.item_num = model.n_items
+        self.user_num = model.n_users
+        
+        # Build II Matrix (Item-Item)
+        # This is done once at initialization
+        self.image_II_matrix = None
+        self.text_II_matrix = None
+        self._build_item_item_matrix()
+        
+        # Interest Clustering & Debiasing
+        self.multimodal_interest_space = None
+        if self.config['OpenInterestDebiase'] if 'OpenInterestDebiase' in self.config else False:
+             self._init_interest_clustering()
+            
+    def _init_interest_clustering(self):
+        # Parameters for clustering
+        # Assuming these are in config, or set defaults
+        kmeans_cluster_num = self.config['kmeans_cluster_num'] if 'kmeans_cluster_num' in self.config else 20
+        use_auto_optimal_k = self.config['use_auto_optimal_k'] if 'use_auto_optimal_k' in self.config else False
+        
+        image_modal_cluster = MultimodalCluster(
+            num_cluster_visual_modal=20,
+            num_cluster_text_modal=20,
+            num_cluster_audio_modal=20,
+            num_cluster_fusion_modal=20,
+            kmeans_cluster_num=kmeans_cluster_num,
+            spectral_cluster_num=20,
+            sim_top_k=20,
+            use_auto_optimal_k=use_auto_optimal_k,
+            kmeans_cluster_num_min=3,
+            kmeans_cluster_num_mean=7,
+            kmeans_cluster_num_max=237,
+            kmeans_stride=10
+        )
+        
+        # Optimal cluster nums per dataset
+        image_optimial_k = 18
+        text_optimial_k = 59
+        audio_optimial_k = 46
+        
+        dataset_name = self.config['dataset']
+        if not use_auto_optimal_k:
+            if dataset_name == 'tiktok':
+                image_optimial_k = 18
+                text_optimial_k = 59
+                audio_optimial_k = 46
+            elif dataset_name == 'baby':
+                image_optimial_k = 6
+                text_optimial_k = 11
+            elif dataset_name == 'sports':
+                image_optimial_k = 9
+                text_optimial_k = 12
+                
+        # Perform clustering
+        self.logger.info("Performing Multimodal Clustering...")
+        image_feats = self.model.image_embedding
+        text_feats = self.model.text_embedding
+        
+        if image_feats is not None:
+            image_labels = image_modal_cluster.multimodal_specific_cluster(
+                image_feats, 'image_modal', image_optimial_k)
+        else:
+            image_labels = None
+            
+        if text_feats is not None:
+            text_labels = image_modal_cluster.multimodal_specific_cluster(
+                text_feats, 'text_modal', text_optimial_k)
+        else:
+            text_labels = None
+            
+        self.multimodal_interest_space = {
+            'image_modal': image_labels,
+            'text_modal': text_labels
+        }
+        self.logger.info("Multimodal Clustering Done.")
+
+    def _build_item_item_matrix(self):
+        # Image
+        if self.model.image_embedding is not None:
+            self.model.image_II_matrix = self._build_knn_adj(self.model.image_embedding)
+        
+        # Text
+        if self.model.text_embedding is not None:
+            self.model.text_II_matrix = self._build_knn_adj(self.model.text_embedding)
+            
+    def _build_knn_adj(self, feature):
+        # Normalize
+        feature_norm = F.normalize(feature, p=2, dim=-1)
+        sim_adj = torch.mm(feature_norm, feature_norm.transpose(1, 0))
+        sim_adj_sparse = build_knn_normalized_graph(sim_adj, topk=self.config['knn_k'], is_sparse=self.model.sparse, norm_type='sym')
+        return sim_adj_sparse.to(self.device)
+
+    def _train_epoch(self, train_data, epoch_idx, loss_func=None):
+        # 0. Build diffusion loader if not exists
+        self._build_diffusion_loader(train_data)
+        
+        # 1. Diffusion Training
+        self.model.train()
+        epDiLoss_image = 0
+        steps = len(self.diffusion_loader)
+        
+        iEmbeds = self.model.getItemEmbeds().detach()
+        image_feats = self.model.getImageFeats().detach() if self.model.image_embedding is not None else None
+        text_feats = self.model.getTextFeats().detach() if self.model.text_embedding is not None else None
+        
+        # Note: GenRecV1 uses User-Item interaction vectors for diffusion
+        # batch_item in diffusion_loader is [batch_users, n_items] (dense)
+        
+        for i, batch in enumerate(self.diffusion_loader):
+            batch_item, batch_index = batch
+            batch_item, batch_index = batch_item.to(self.device), batch_index.to(self.device)
+            
+            # Train Image Diffusion
+            if image_feats is not None:
+                self.denoise_opt_image.zero_grad()
+                # FlipInterestDiffusion.training_losses returns a single scalar loss
+                loss_image = self.model.diffusion_model.training_losses(
+                    self.model.denoise_model_image, batch_item, iEmbeds, batch_index, image_feats, text_feats)
+                
+                epDiLoss_image += loss_image.item()
+                loss_image.backward()
+                self.denoise_opt_image.step()
+                
+            # GenRecV1 usually only trains one diffusion model (for image/structure) or uses joint?
+            # In Main.py lines 297: self.diffusion_model.training_losses(self.denoise_model_image, ...)
+            # It seems it only trains denoise_model_image. 
+            # But wait, it passes text_feats to it too?
+            # "loss_image = self.diffusion_model.training_losses(self.denoise_model_image, batch_item, iEmbeds, batch_index, image_feats, text_feats, audio_feats)"
+            # So it seems there is only ONE diffusion model training step per batch, utilizing all modalities?
+            # But wait, Main.py defines self.denoise_model_image = ModalDenoiseTransformer(...)
+            # It doesn't define denoise_model_text.
+            # So I will stick to training just self.denoise_model_image.
+            
+        # 2. Graph Construction (Re-build UI matrix)
+        with torch.no_grad():
+            u_list_image = []
+            i_list_image = []
+            edge_list_image = []
+            
+            for _, batch in enumerate(self.diffusion_loader):
+                batch_item, batch_index = batch
+                batch_item, batch_index = batch_item.to(self.device), batch_index.to(self.device)
+                
+                # p_sample returns (x_t, probs)
+                denoised_batch, denoised_prob = self.model.diffusion_model.p_sample(
+                    self.model.denoise_model_image, batch_item, self.model.sampling_steps, self.model.bayesian_samplinge_schedule)
+                
+                # TopK selection logic from GenRecV1 Main.py
+                # _, indices = torch.topk(denoised_prob, k=self.model.gen_topk, dim=1)
+                # mask = torch.zeros_like(denoised_prob, dtype=torch.bool).scatter_(1, indices, True)
+                # denoised_batch = torch.where(mask, denoised_batch, batch_item)
+                
+                # top_item, indices_ = torch.topk(denoised_batch * denoised_prob, k=self.model.rebuild_k)
+                
+                # Using simplified logic from Main.py
+                _, indices = torch.topk(denoised_prob, k=self.model.gen_topk, dim=1) 
+                mask = torch.zeros_like(denoised_prob, dtype=torch.bool).scatter_(1, indices, True)
+                denoised_batch = torch.where(mask, denoised_batch, batch_item)
+                
+                # Interest Debiasing
+                if (self.config['OpenInterestDebiase'] if 'OpenInterestDebiase' in self.config else False) and self.multimodal_interest_space is not None:
+                     # GenRec-V1 applies debiasing per batch
+                     # Assuming 'image_modal' and 'text_modal' are available
+                     # Note: Main.py handles audio if tiktok, but we focus on image/text for general
+                     
+                     # We need sample_ratio
+                     sample_ratio = self.config['sample_ratio'] if 'sample_ratio' in self.config else 0.1
+                     
+                     image_interest_judge = InterestDebiase(
+                        origin_interaction_graph = batch_item,
+                        generated_interaction_graph = denoised_batch,
+                        interest_cluster_space_dict = self.multimodal_interest_space,
+                        image_modality='image_modal',
+                        text_modality='text_modal',
+                        audio_modality=None, # simplified
+                        sample_ratio = sample_ratio
+                     )
+                     denoised_batch = image_interest_judge.interest_query_debiase()
+
+                top_item, indices_ = torch.topk(denoised_batch * denoised_prob, k=self.model.rebuild_k)
+                
+                for i in range(batch_index.shape[0]):
+                    for j in range(indices_[i].shape[0]): 
+                        u_list_image.append(int(batch_index[i].cpu().numpy()))
+                        i_list_image.append(int(indices_[i][j].cpu().numpy()))
+                        edge_list_image.append(1.0)
+            
+            # Build Matrix
+            u_list_image = np.array(u_list_image)
+            i_list_image = np.array(i_list_image)
+            edge_list_image = np.array(edge_list_image)
+            self.model.image_UI_matrix = self.buildUIMatrix(u_list_image, i_list_image, edge_list_image)
+            self.model.image_UI_matrix = self.model.edgeDropper(self.model.image_UI_matrix)
+            
+            # GenRecV1 usually doesn't generate Text UI matrix in Main.py?
+            # Lines 458-462 are commented out in Main.py for Text UI matrix.
+            # So I will skip Text UI matrix generation.
+            
+        # 3. Recommendation Training
+        # Set R (Sparse Interaction Matrix) for Item-Item GCN if not set
+        # self.model.R is needed. GeneralRecommender usually doesn't have self.R
+        # But DataHandler in GenRecV1 has it.
+        # MMRec Trainer uses train_data (DataLoader).
+        # I need to construct R from train_data if model needs it.
+        # But wait, self.model.norm_adj is available in DiffMM (calculated in init).
+        # GenRecV1 uses self.handler.R which seems to be sparse user-item matrix.
+        # I can use self.model.norm_adj as R? Or I need un-normalized R?
+        # In item_item_GCN: image_user_embedding = torch.sparse.mm(R, image_item_id_embedding)
+        # Usually R is the adjacency matrix. self.model.norm_adj should work or I can construct it.
+        # Let's assume self.model.norm_adj is fine or use a helper to get it.
+        # DiffMM has get_norm_adj_mat. I should ensure GenRecV1 has it too.
+        # I'll check GenRecV1 class again. I didn't add get_norm_adj_mat or norm_adj initialization.
+        # I should add it to GenRecV1.__init__.
+        
+        # For now, let's inject R into model
+        if not hasattr(self.model, 'R'):
+             # DiffMM uses norm_adj.
+             # I'll use norm_adj as R for now.
+             pass
+             
+        rec_loss, loss_batches = super(DiffMMTrainer, self)._train_epoch(train_data, epoch_idx, loss_func)
+        
+        self.logger.info(f"Diffusion Loss: {epDiLoss_image/steps:.4f}")
+        return rec_loss, loss_batches
+

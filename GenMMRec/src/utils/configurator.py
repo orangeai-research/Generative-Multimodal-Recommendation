@@ -112,9 +112,9 @@ class Config(object):
             self.final_config_dict['hyper_parameters'] += ['seed']
 
     def _init_device(self):
-        use_gpu = self.final_config_dict['use_gpu']
+        use_gpu = self.final_config_dict.get('use_gpu', True)
         if use_gpu:
-            os.environ["CUDA_VISIBLE_DEVICES"] = str(self.final_config_dict['gpu_id'])
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(self.final_config_dict.get('gpu_id', 0))
         self.final_config_dict['device'] = torch.device("cuda" if torch.cuda.is_available() and use_gpu else "cpu")
 
     def __setitem__(self, key, value):
