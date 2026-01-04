@@ -293,12 +293,15 @@ class RFMREC(GeneralRecommender):
 
 class MultiScaleVelocityNet(nn.Module):
     """
-    Multi-scale Velocity Network with conditional injection
+    Enhanced Multi-scale Velocity Network with Attention and Deep Conditioning
 
     Architecture:
         - Time embedding (sinusoidal encoding)
-        - Condition encoders for each modality
-        - ResNet-like blocks with FiLM modulation
+        - Deep condition encoders for each modality
+        - Cross-attention for condition-aware feature extraction
+        - Self-attention for long-range dependencies
+        - Deep residual blocks with AdaGN modulation
+        - Multi-scale feature fusion
     """
 
     def __init__(self, embedding_dim, hidden_dim, n_layers, dropout,
@@ -307,50 +310,88 @@ class MultiScaleVelocityNet(nn.Module):
 
         self.embedding_dim = embedding_dim
         self.hidden_dim = hidden_dim
+        self.n_layers = n_layers
 
-        # Time embedding (positional encoding)
+        # Time embedding (enhanced)
         self.time_embed = nn.Sequential(
-            SinusoidalPositionEmbedding(128),
-            nn.Linear(128, hidden_dim),
+            SinusoidalPositionEmbedding(256),
+            nn.Linear(256, hidden_dim),
+            nn.SiLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim)
         )
 
-        # Condition encoders
+        # Deep condition encoders with residual connections
         self.condition_encoders = nn.ModuleDict()
+        self.condition_dims = {}
 
         if interaction_dim > 0:
-            self.condition_encoders['interaction'] = nn.Sequential(
-                nn.Linear(interaction_dim, hidden_dim),
-                nn.SiLU(),
-                nn.Linear(hidden_dim, hidden_dim)
+            self.condition_encoders['interaction'] = DeepConditionEncoder(
+                interaction_dim, hidden_dim, n_layers=2, dropout=dropout
             )
+            self.condition_dims['interaction'] = hidden_dim
 
         if visual_dim > 0:
-            self.condition_encoders['visual'] = nn.Sequential(
-                nn.Linear(visual_dim, hidden_dim),
-                nn.SiLU(),
-                nn.Linear(hidden_dim, hidden_dim)
+            self.condition_encoders['visual'] = DeepConditionEncoder(
+                visual_dim, hidden_dim, n_layers=2, dropout=dropout
             )
+            self.condition_dims['visual'] = hidden_dim
 
         if text_dim > 0:
-            self.condition_encoders['text'] = nn.Sequential(
-                nn.Linear(text_dim, hidden_dim),
-                nn.SiLU(),
-                nn.Linear(hidden_dim, hidden_dim)
+            self.condition_encoders['text'] = DeepConditionEncoder(
+                text_dim, hidden_dim, n_layers=2, dropout=dropout
             )
+            self.condition_dims['text'] = hidden_dim
 
-        # Input projection
-        self.input_proj = nn.Linear(embedding_dim * 2 + hidden_dim, hidden_dim)
+        # Input projection with layer norm
+        self.input_proj = nn.Sequential(
+            nn.Linear(embedding_dim * 2, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.SiLU(),
+            nn.Dropout(dropout)
+        )
 
-        # Residual blocks with conditional modulation
-        self.res_blocks = nn.ModuleList([
-            ResidualBlock(hidden_dim, hidden_dim, condition_dim=hidden_dim, dropout=dropout)
+        # Cross-attention layers for condition fusion
+        self.cross_attentions = nn.ModuleList([
+            CrossAttentionBlock(hidden_dim, num_heads=8, dropout=dropout)
             for _ in range(n_layers)
         ])
 
-        # Output projection
-        self.output_proj = nn.Linear(hidden_dim, embedding_dim * 2)
+        # Self-attention layers for feature refinement
+        self.self_attentions = nn.ModuleList([
+            SelfAttentionBlock(hidden_dim, num_heads=8, dropout=dropout)
+            for _ in range(n_layers)
+        ])
+
+        # Enhanced residual blocks with AdaGN
+        self.res_blocks = nn.ModuleList([
+            EnhancedResidualBlock(hidden_dim, hidden_dim, condition_dim=hidden_dim, dropout=dropout)
+            for _ in range(n_layers)
+        ])
+
+        # Mid-layer feature extraction (for skip connections)
+        self.mid_layers = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.LayerNorm(hidden_dim),
+                nn.SiLU()
+            )
+            for _ in range(n_layers // 2)
+        ])
+
+        # Output projection with residual
+        self.output_proj = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.SiLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, embedding_dim * 2)
+        )
+
+        # Learnable scale parameter for residual connections
+        self.skip_scale = nn.Parameter(torch.ones(n_layers))
 
     def forward(self, x, t, conditions):
         """
@@ -363,21 +404,53 @@ class MultiScaleVelocityNet(nn.Module):
             velocity v(x, t, c), shape (batch, embedding_dim*2)
         """
         # Time embedding
-        t_emb = self.time_embed(t)
+        t_emb = self.time_embed(t)  # (batch, hidden_dim)
 
-        # Aggregate all conditions
-        cond_emb = t_emb
+        # Encode all conditions
+        cond_features = []
         for name, encoder in self.condition_encoders.items():
             if name in conditions:
-                cond_emb = cond_emb + encoder(conditions[name])
+                cond_feat = encoder(conditions[name])
+                cond_features.append(cond_feat)
 
-        # Input: [x, t_emb]
-        h = torch.cat([x, t_emb], dim=-1)
-        h = self.input_proj(h)
+        # Stack conditions for attention: (batch, n_conditions, hidden_dim)
+        if len(cond_features) > 0:
+            cond_stack = torch.stack(cond_features, dim=1)
+        else:
+            # Fallback: use time embedding as condition
+            cond_stack = t_emb.unsqueeze(1)
 
-        # Residual blocks with condition injection
-        for block in self.res_blocks:
-            h = block(h, cond_emb)
+        # Aggregate conditions (mean pooling + time)
+        cond_agg = cond_stack.mean(dim=1) + t_emb  # (batch, hidden_dim)
+
+        # Input projection
+        h = self.input_proj(x)  # (batch, hidden_dim)
+
+        # Store intermediate features for skip connections
+        skip_features = []
+
+        # Deep processing with interleaved attention and residual blocks
+        for i in range(self.n_layers):
+            # Store feature for skip connection
+            if i < len(self.mid_layers):
+                skip_features.append(self.mid_layers[i](h))
+
+            # Cross-attention: query from current features, key/value from conditions
+            h_cross = self.cross_attentions[i](h.unsqueeze(1), cond_stack).squeeze(1)
+            h = h + h_cross
+
+            # Self-attention: refine features
+            h_self = self.self_attentions[i](h.unsqueeze(1)).squeeze(1)
+            h = h + h_self
+
+            # Residual block with adaptive conditioning
+            h_res = self.res_blocks[i](h, cond_agg)
+            h = h + self.skip_scale[i] * h_res
+
+        # Add skip connections from mid-layers
+        if len(skip_features) > 0:
+            skip_sum = torch.stack(skip_features, dim=0).mean(dim=0)
+            h = h + skip_sum
 
         # Output velocity
         v = self.output_proj(h)
@@ -385,28 +458,146 @@ class MultiScaleVelocityNet(nn.Module):
         return v
 
 
-class ResidualBlock(nn.Module):
-    """
-    Residual block with FiLM (Feature-wise Linear Modulation) conditioning
-    """
+class DeepConditionEncoder(nn.Module):
+    """Deep encoder for condition features with residual connections"""
 
-    def __init__(self, in_dim, out_dim, condition_dim, dropout=0.1):
+    def __init__(self, input_dim, hidden_dim, n_layers=2, dropout=0.1):
         super().__init__()
 
-        self.net = nn.Sequential(
-            nn.Linear(in_dim, out_dim),
-            nn.LayerNorm(out_dim),
-            nn.SiLU(),
-            nn.Dropout(dropout),
-            nn.Linear(out_dim, out_dim),
+        layers = []
+        current_dim = input_dim
+
+        for _ in range(n_layers):
+            layers.append(nn.Sequential(
+                nn.Linear(current_dim, hidden_dim),
+                nn.LayerNorm(hidden_dim),
+                nn.SiLU(),
+                nn.Dropout(dropout)
+            ))
+            current_dim = hidden_dim
+
+        self.layers = nn.ModuleList(layers)
+
+        # Input projection for skip connection
+        if input_dim != hidden_dim:
+            self.input_proj = nn.Linear(input_dim, hidden_dim)
+        else:
+            self.input_proj = nn.Identity()
+
+    def forward(self, x):
+        h = x
+        skip = self.input_proj(x)
+
+        for layer in self.layers:
+            h = layer(h)
+
+        return h + skip
+
+
+class CrossAttentionBlock(nn.Module):
+    """Cross-attention mechanism for condition-aware feature extraction"""
+
+    def __init__(self, hidden_dim, num_heads=8, dropout=0.1):
+        super().__init__()
+
+        self.attention = nn.MultiheadAttention(
+            embed_dim=hidden_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True
         )
 
-        # FiLM: scale and shift modulation
-        self.cond_scale = nn.Linear(condition_dim, out_dim)
-        self.cond_shift = nn.Linear(condition_dim, out_dim)
+        self.norm1 = nn.LayerNorm(hidden_dim)
+        self.norm2 = nn.LayerNorm(hidden_dim)
+
+        self.ffn = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim * 4),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim * 4, hidden_dim),
+            nn.Dropout(dropout)
+        )
+
+    def forward(self, query, key_value):
+        """
+        Args:
+            query: (batch, 1, hidden_dim) - current features
+            key_value: (batch, n_conditions, hidden_dim) - condition features
+        """
+        # Cross-attention
+        attn_out, _ = self.attention(query, key_value, key_value)
+        query = self.norm1(query + attn_out)
+
+        # Feed-forward
+        ffn_out = self.ffn(query)
+        query = self.norm2(query + ffn_out)
+
+        return query
+
+
+class SelfAttentionBlock(nn.Module):
+    """Self-attention mechanism for feature refinement"""
+
+    def __init__(self, hidden_dim, num_heads=8, dropout=0.1):
+        super().__init__()
+
+        self.attention = nn.MultiheadAttention(
+            embed_dim=hidden_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True
+        )
+
+        self.norm = nn.LayerNorm(hidden_dim)
+
+    def forward(self, x):
+        """
+        Args:
+            x: (batch, seq_len, hidden_dim)
+        """
+        attn_out, _ = self.attention(x, x, x)
+        return self.norm(x + attn_out)
+
+
+class EnhancedResidualBlock(nn.Module):
+    """
+    Enhanced Residual block with Adaptive Group Normalization (AdaGN)
+    More powerful than simple FiLM modulation
+    """
+
+    def __init__(self, in_dim, out_dim, condition_dim, dropout=0.1, num_groups=8):
+        super().__init__()
+
+        self.num_groups = num_groups
+
+        # Main network path
+        self.net = nn.Sequential(
+            nn.Linear(in_dim, out_dim * 2),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(out_dim * 2, out_dim),
+        )
+
+        # Group normalization
+        self.group_norm = nn.GroupNorm(num_groups, out_dim)
+
+        # Adaptive modulation (scale and shift for each group)
+        self.cond_scale = nn.Sequential(
+            nn.Linear(condition_dim, condition_dim),
+            nn.SiLU(),
+            nn.Linear(condition_dim, out_dim)
+        )
+        self.cond_shift = nn.Sequential(
+            nn.Linear(condition_dim, condition_dim),
+            nn.SiLU(),
+            nn.Linear(condition_dim, out_dim)
+        )
 
         # Skip connection
         self.skip = nn.Linear(in_dim, out_dim) if in_dim != out_dim else nn.Identity()
+
+        # Additional layer norm for stability
+        self.layer_norm = nn.LayerNorm(out_dim)
 
     def forward(self, x, cond):
         """
@@ -419,10 +610,18 @@ class ResidualBlock(nn.Module):
         """
         h = self.net(x)
 
-        # FiLM modulation: h = scale * h + shift
+        # Reshape for group normalization: (batch, out_dim) -> (batch, out_dim, 1)
+        h = h.unsqueeze(-1)
+        h = self.group_norm(h)
+        h = h.squeeze(-1)
+
+        # Adaptive modulation
         scale = self.cond_scale(cond)
         shift = self.cond_shift(cond)
         h = scale * h + shift
+
+        # Layer normalization for stability
+        h = self.layer_norm(h)
 
         # Residual connection
         return h + self.skip(x)

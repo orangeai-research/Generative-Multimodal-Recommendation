@@ -4,9 +4,10 @@
 # Base embedding settings
 embedding_size: 64
 
-# Rectified Flow Network Architecture
-rf_hidden_dim: 512
-rf_n_layers: 3
+# Enhanced Rectified Flow Network Architecture
+# Deep attention-based velocity network with cross-attention and self-attention
+rf_hidden_dim: 512        # Hidden dimension (increased for better capacity)
+rf_n_layers: 6            # Number of layers (increased from 3 to 6 for deeper network)
 rf_dropout: 0.1
 
 # Rectified Flow Training Settings

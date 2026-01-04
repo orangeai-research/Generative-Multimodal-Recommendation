@@ -22,6 +22,12 @@ from logging import getLogger
 from utils.utils import get_local_time, early_stopping, dict2str
 from utils.topk_evaluator import TopKEvaluator
 
+try:
+    import wandb
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
+
 
 class AbstractTrainer(object):
     r"""Trainer Class is used to manage the training and evaluation processes of recommender system models.
@@ -82,6 +88,9 @@ class Trainer(AbstractTrainer):
             self.weight_decay = eval(wd) if isinstance(wd, str) else wd
 
         self.req_training = config['req_training']
+
+        # W&B logging
+        self.use_wandb = (config['use_wandb'] if 'use_wandb' in config else True) and WANDB_AVAILABLE and wandb.run is not None
 
         self.start_epoch = 0
         self.cur_step = 0
@@ -259,6 +268,21 @@ class Trainer(AbstractTrainer):
                 if post_info is not None:
                     self.logger.info(post_info)
 
+            # Log training loss to wandb
+            if self.use_wandb:
+                wandb_log = {
+                    'epoch': epoch_idx,
+                    'train/time': training_end_time - training_start_time,
+                    'train/lr': self.optimizer.param_groups[0]['lr']
+                }
+                if isinstance(train_loss, tuple):
+                    for idx, loss in enumerate(train_loss):
+                        wandb_log[f'train/loss_{idx+1}'] = loss
+                    wandb_log['train/total_loss'] = sum(train_loss)
+                else:
+                    wandb_log['train/loss'] = train_loss
+                wandb.log(wandb_log, step=epoch_idx)
+
             # eval: To ensure the test result is the best model under validation data, set self.eval_step == 1
             if (epoch_idx + 1) % self.eval_step == 0:
                 valid_start_time = time()
@@ -276,12 +300,33 @@ class Trainer(AbstractTrainer):
                     self.logger.info(valid_score_output)
                     self.logger.info(valid_result_output)
                     self.logger.info('test result: \n' + dict2str(test_result))
+
+                # Log validation and test results to wandb
+                if self.use_wandb:
+                    wandb_eval_log = {
+                        'epoch': epoch_idx,
+                        'valid/score': valid_score,
+                        'valid/time': valid_end_time - valid_start_time,
+                        **{f'valid/{k}': v for k, v in valid_result.items()},
+                        **{f'test/{k}': v for k, v in test_result.items()}
+                    }
+                    wandb.log(wandb_eval_log, step=epoch_idx)
+
                 if update_flag:
                     update_output = '██ ' + self.config['model'] + '--Best validation results updated!!!'
                     if verbose:
                         self.logger.info(update_output)
                     self.best_valid_result = valid_result
                     self.best_test_upon_valid = test_result
+
+                    # Log best results to wandb
+                    if self.use_wandb:
+                        wandb.run.summary.update({
+                            'best_epoch': epoch_idx,
+                            'best_valid_score': valid_score,
+                            **{f'best_valid_{k}': v for k, v in valid_result.items()},
+                            **{f'best_test_{k}': v for k, v in test_result.items()}
+                        })
 
                 if stop_flag:
                     stop_output = '+++++Finished training, best eval result in epoch %d' % \
