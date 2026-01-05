@@ -10,21 +10,27 @@
 
 # Weekly Dev Log
 ### News: 本周更新模型如下：
-## 🚀 **[Update ] **
-- **新增模型**: 2026-01-05新增DiffRec生成式模型, wandb可视化组件 
-- **新增模型**: 2026-01-04新增CoDMR生成式模型。
-- **新增模型**: 2026-01-03新增LD4MRec生成式模型。
+## 🚀 **[SOTA GenMMRec Models] **
+- **新增模型**: 2026-01-06新增WWW'24 MCDRec生成式模型
+- **新增模型**: 2026-01-06新增SIGIR'24 DDRM生成式模型
+- **新增模型**: 2026-01-05新增WSDM'2025 DiffGraph生成式模型
+- **新增模型**: 2026-01-05新增SIGIR'23 DiffRec生成式模型, wandb可视化组件,Rectify Flow模型实验效果分析
+- **新增模型**: 2026-01-04新增SIGIR'25 CoDMR生成式模型。
+- **新增模型**: 2026-01-03新增WWW'24 LD4MRec生成式模型。
 - **新增模型**: 2025-12-31引入了新的Rectify Flow 机制，已打通RFMRec模型的初步流程。
-- **新增模型**: 2025-12-30新增GenRec-V1生成式模型到当前框架中，模型、配置文件、数据读取、训练代码已验证。
+- **新增模型**: 2025-12-30新增MM'25 GenRec-V1生成式模型到当前框架中，模型、配置文件、数据读取、训练代码已验证。
 
 | **Model**       | **Paper**                                                                                             | **Conference/Journal** | **Code**    |
 |------------------|--------------------------------------------------------------------------------------------------------|------------------------|-------------|
 | **Newly added**  |                                                                                                        |                        |             |
-| CoDMR         | [ Collaborative Diffusion Models for Recommendation](https://dl.acm.org/doi/pdf/10.1145/3726302.3729929)                                          | SIGIR'25                 | codmr.py |
+| CoDMR         | [Collaborative Diffusion Models for Recommendation ](https://dl.acm.org/doi/pdf/10.1145/3726302.3729929)                                          | SIGIR'25                 | codmr.py |
 | GenRec-V1 | [Flip is Better than Noise: Unbiased Interest Generation for Multimedia Recommendation](https://dl.acm.org/doi/abs/10.1145/3746027.3755743)                                 | MM'25                  | genrecv1.py  |
 | WSDM'2025  | [DiffGraph: Heterogeneous Graph Diffusion Model for Recommendation](https://arxiv.org/abs/2501.02313)                                 | WSDM'25                | diffgraph.py  |
+| DDRM         | [Denoising Diffusion Recommender Model ](https://dl.acm.org/doi/pdf/10.1145/3626772.3657825)  
+| SIGIR'24                  | ddrm.py  | 
 | DiffMM     | [Diffmm: Multi-modal diffusion model for recommendation](https://arxiv.org/pdf/2406.11781)                       | MM'24               | diffmm.py          |
 | LD4MRec  | [LD4MRec: Simplifying and Powering Diffusion Model for Multimedia Recommendation](https://arxiv.org/pdf/2309.15363)                                 | WWW'24                | ld4mrec.py  |
+| MCDRec  | [Multimodal Conditioned Diffusion Model for Recommendation](https://web.archive.org/web/20240521123350id_/https://dl.acm.org/doi/pdf/10.1145/3589335.3651956)                                 | WWW'24                | mcdrec.py  |
 | DiffRec  | [DiffRec: Diffusion Recommender Model](https://arxiv.org/abs/2304.04971)                                 | SIGIR'23                | diffrec.py  |
 
 ### 📝 TODO / Next Week
