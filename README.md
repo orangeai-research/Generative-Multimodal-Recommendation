@@ -25,9 +25,8 @@
 | **Newly added**  |                                                                                                        |                        |             |
 | CoDMR         | [Collaborative Diffusion Models for Recommendation ](https://dl.acm.org/doi/pdf/10.1145/3726302.3729929)                                          | SIGIR'25                 | codmr.py |
 | GenRec-V1 | [Flip is Better than Noise: Unbiased Interest Generation for Multimedia Recommendation](https://dl.acm.org/doi/abs/10.1145/3746027.3755743)                                 | MM'25                  | genrecv1.py  |
-| WSDM'2025  | [DiffGraph: Heterogeneous Graph Diffusion Model for Recommendation](https://arxiv.org/abs/2501.02313)                                 | WSDM'25                | diffgraph.py  |
-| DDRM         | [Denoising Diffusion Recommender Model ](https://dl.acm.org/doi/pdf/10.1145/3626772.3657825)  
-| SIGIR'24                  | ddrm.py  | 
+| DiffGraph  | [DiffGraph: Heterogeneous Graph Diffusion Model for Recommendation](https://arxiv.org/abs/2501.02313)                                 | WSDM'25                | diffgraph.py  |
+| DDRM  | [Denoising Diffusion Recommender Model](https://dl.acm.org/doi/pdf/10.1145/3626772.3657825)                                 | SIGIR'24               | ddrm.py  |
 | DiffMM     | [Diffmm: Multi-modal diffusion model for recommendation](https://arxiv.org/pdf/2406.11781)                       | MM'24               | diffmm.py          |
 | LD4MRec  | [LD4MRec: Simplifying and Powering Diffusion Model for Multimedia Recommendation](https://arxiv.org/pdf/2309.15363)                                 | WWW'24                | ld4mrec.py  |
 | MCDRec  | [Multimodal Conditioned Diffusion Model for Recommendation](https://web.archive.org/web/20240521123350id_/https://dl.acm.org/doi/pdf/10.1145/3589335.3651956)                                 | WWW'24                | mcdrec.py  |
