@@ -10,7 +10,8 @@
 
 # Weekly Dev Log
 ### News: 本周更新模型如下：
-## 🚀 **[Model Name A] v1.2**
+## 🚀 **[Update ] **
+- **新增模型**: 2026-01-05新增DiffRec生成式模型, wandb可视化组件 
 - **新增模型**: 2026-01-04新增CoDMR生成式模型。
 - **新增模型**: 2026-01-03新增LD4MRec生成式模型。
 - **新增模型**: 2025-12-31引入了新的Rectify Flow 机制，已打通RFMRec模型的初步流程。
@@ -23,6 +24,7 @@
 | GenRec-V1 | [Flip is Better than Noise: Unbiased Interest Generation for Multimedia Recommendation](https://dl.acm.org/doi/abs/10.1145/3746027.3755743)                                 | MM'25                  | genrecv1.py  |
 | DiffMM     | [Diffmm: Multi-modal diffusion model for recommendation](https://arxiv.org/pdf/2406.11781)                       | MM'24               | diffmm.py          |
 | LD4MRec  | [LD4MRec: Simplifying and Powering Diffusion Model for Multimedia Recommendation](https://arxiv.org/pdf/2309.15363)                                 | WWW'24                | ld4mrec.py  |
+| DiffRec  | [DiffRec: Diffusion Recommender Model](https://arxiv.org/abs/2304.04971)                                 | SIGIR'23                | diffrec.py  |
 
 
 ### 📝 TODO / Next Week
