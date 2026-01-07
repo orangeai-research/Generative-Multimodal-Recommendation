@@ -136,7 +136,9 @@ class GenRecV1(GeneralRecommender):
 		inter_M_t = interaction_matrix.transpose()
 		data_dict = dict(zip(zip(inter_M.row, inter_M.col + self.n_users), [1] * inter_M.nnz))
 		data_dict.update(dict(zip(zip(inter_M_t.row + self.n_users, inter_M_t.col), [1] * inter_M_t.nnz)))
-		A._update(data_dict)
+		# A._update(data_dict)
+		for key, value in data_dict.items() :
+			A[key] = value
 		sumArr = (A > 0).sum(axis=1)
 		diag = np.array(sumArr.flatten())[0] + 1e-7
 		diag = np.power(diag, -0.5)
@@ -560,8 +562,12 @@ class FlipInterestDiffusion(nn.Module):
 		adaptive_alpha = alpha * pos_weight.detach()
 		pos_mask = x_start.float()
 		neg_mask = 1 - pos_mask
-		pos_loss = -adaptive_alpha * (1 - p).pow(gamma) * pos_mask * torch.log(p)
-		neg_loss = -(1 - adaptive_alpha) * p.pow(gamma) * neg_mask * torch.log(1 - p)
+		
+		# Stable Focal Loss
+		p_safe = torch.clamp(p, 1e-7, 1-1e-7)
+		pos_loss = -adaptive_alpha * (1 - p_safe).pow(gamma) * pos_mask * torch.log(p_safe)
+		neg_loss = -(1 - adaptive_alpha) * p_safe.pow(gamma) * neg_mask * torch.log(1 - p_safe)
+		
 		focal_loss = (pos_loss + neg_loss).sum() / (pos_mask.sum() + neg_mask.sum() + 1e-8)
 		bce_loss = F.binary_cross_entropy_with_logits(
 			logits, x_start.float(), 
@@ -594,7 +600,8 @@ class FlipInterestDiffusion(nn.Module):
 		if self.audio_modality:
 			total_loss = focal_loss +  kl_loss + self.ssl_gen1 * cl_loss   + self.ssl_gen2 * cl_loss_text + self.ssl_gen3 * cl_loss_audio 
 		else:
-			total_loss = focal_loss +  kl_loss + self.ssl_gen1 * cl_loss  + self.ssl_gen2 * cl_loss_text 
+			# total_loss = focal_loss +  kl_loss + self.ssl_gen1 * cl_loss  + self.ssl_gen2 * cl_loss_text 
+			total_loss = bce_loss +  kl_loss + 0.01 * cl_loss
 
 		return total_loss
 
@@ -602,8 +609,10 @@ class FlipInterestDiffusion(nn.Module):
 		post_probs = self._true_posterior(x0, xt, t).detach()
 		post_probs = torch.clamp(post_probs, self.eps, 1-self.eps)
 		probs = torch.clamp(probs.detach(), self.eps, 1-self.eps)
-		kl = post_probs * (torch.log(post_probs) - torch.log(probs))
-		kl += (1 - post_probs) * (torch.log(1 - post_probs) - torch.log(1 - probs))
+		
+		# Stable KL
+		kl = post_probs * (torch.log(post_probs + 1e-10) - torch.log(probs + 1e-10))
+		kl += (1 - post_probs) * (torch.log(1 - post_probs + 1e-10) - torch.log(1 - probs + 1e-10))
 		return kl.mean(dim=1)
 
 	def _true_posterior(self, x0, xt, t):
