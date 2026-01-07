@@ -1,0 +1,105 @@
+# RFGUME: Rectified Flow for GUME
+# Combining GUME's multimodal recommendation with Rectified Flow for extended_id_embeds generation
+
+# ===== Base Settings (inherited from GUME) =====
+embedding_size: 64
+learning_rate: 0.001
+learning_rate_scheduler: [0.96, 50]
+
+# ===== GUME Parameters =====
+# Graph convolution layers
+n_ui_layers: 3              # Number of user-item graph convolution layers
+n_layers: 2                 # Number of modality-specific graph convolution layers
+knn_k: 10                   # K for KNN graph construction
+
+# Loss weights for GUME
+bm_loss: 0.01               # Behavior-modality alignment loss weight
+um_loss: 0.01               # User modality enhancement loss weight
+vt_loss: 0.1                # Vision-text alignment loss weight
+
+# Temperature parameters
+bm_temp: 0.4                # Temperature for behavior-modality InfoNCE
+um_temp: 0.1                # Temperature for user modality InfoNCE
+
+# Regularization
+reg_weight_1: 1e-05         # L2 regularization weight for embeddings
+reg_weight_2: 0.1           # L2 regularization weight for noise
+
+# ===== Rectified Flow Parameters =====
+use_rf: True                # Enable RF for extended_id_embeds generation (set False for ablation)
+
+# RF Network Architecture
+rf_hidden_dim: 256          # Hidden dimension of velocity field network
+rf_n_layers: 3              # Number of layers in velocity field network
+rf_dropout: 0.1             # Dropout rate for RF network
+
+# RF Training & Sampling
+rf_sampling_steps: 10       # ODE solver steps (balance between speed and quality)
+                            # - 1 step: fastest but lower quality
+                            # - 10 steps: good balance (recommended)
+                            # - 100 steps: highest quality but slower
+
+# RF Loss Weights
+rf_loss_weight: 1.0         # Weight for RF velocity field loss
+contrast_loss_weight: 0.1   # Weight for InfoNCE contrast loss between generated and target embeds
+
+# ===== Training Settings =====
+epochs: 1000
+train_batch_size: 2048
+eval_batch_size: 4096
+stopping_step: 10
+
+# ===== Ablation Study Configurations =====
+# Uncomment the following sections for different ablation experiments:
+
+# # Experiment 1: Disable RF (back to original GUME)
+# use_rf: False
+
+# # Experiment 2: Fast 1-step generation
+# rf_sampling_steps: 1
+
+# # Experiment 3: High-quality 100-step generation
+# rf_sampling_steps: 100
+
+# # Experiment 4: Adjust loss weights
+# rf_loss_weight: 0.5
+# contrast_loss_weight: 0.5
+
+# # Experiment 5: Larger RF network
+# rf_hidden_dim: 512
+# rf_n_layers: 4
+
+# # Experiment 6: Smaller RF network
+# rf_hidden_dim: 128
+# rf_n_layers: 2
+
+# ===== Dataset-Specific Configurations =====
+# Uncomment the section for your dataset:
+
+# # Baby dataset (default, already set above)
+# n_layers: 2
+# bm_temp: 0.4
+# um_loss: 0.01
+# um_temp: 0.1
+# vt_loss: 0.1
+
+# # Sports dataset
+# n_layers: 1
+# bm_temp: 0.2
+# um_loss: 0.01
+# um_temp: 0.1
+# vt_loss: 0.01
+
+# # Clothing dataset
+# n_layers: 1
+# bm_temp: 0.2
+# um_loss: 0.1
+# um_temp: 0.2
+# vt_loss: 0.001
+
+# # Electronics dataset
+# n_layers: 1
+# bm_temp: 0.2
+# um_loss: 0.1
+# um_temp: 0.2
+# vt_loss: 0.1
