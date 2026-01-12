@@ -10,6 +10,36 @@ import torch.nn.functional as F
 from models.gume import GUME
 
 
+def cosine_similarity_gradient(x_t, x_1):
+    """
+    计算 cos_sim(x_t, x_1) 相对于 x_t 的梯度
+
+    梯度公式: ∇_{x_t} cos_sim(x_t, x_1) = (x_1 / ||x_1||) / ||x_t|| - (x_t / ||x_t||) * cos_sim / ||x_t||
+
+    Args:
+        x_t: 当前状态, shape (batch, embedding_dim)
+        x_1: 目标状态, shape (batch, embedding_dim)
+
+    Returns:
+        grad: 余弦相似度的梯度, shape (batch, embedding_dim)
+    """
+    # 计算余弦相似度
+    cos_sim = F.cosine_similarity(x_t, x_1, dim=-1, keepdim=True)  # (batch, 1)
+
+    # 计算范数
+    x_t_norm = x_t.norm(dim=-1, keepdim=True)  # (batch, 1)
+    x_t_norm = torch.clamp(x_t_norm, min=1e-8)  # 避免除零
+
+    # 归一化向量
+    x_1_normalized = F.normalize(x_1, dim=-1)  # (batch, embedding_dim)
+    x_t_normalized = F.normalize(x_t, dim=-1)  # (batch, embedding_dim)
+
+    # 计算梯度
+    grad = x_1_normalized / x_t_norm - x_t_normalized * cos_sim / x_t_norm
+
+    return grad
+
+
 class SimpleVelocityNet(nn.Module):
     """
     简单的速度场网络，用于Rectified Flow
@@ -23,13 +53,16 @@ class SimpleVelocityNet(nn.Module):
     """
 
     def __init__(self, embedding_dim, hidden_dim, n_layers, dropout, condition_dim,
-                 user_guidance_scale=0.2, guidance_decay_power=2.0):
+                 user_guidance_scale=0.2, guidance_decay_power=2.0,
+                 cosine_guidance_scale=0.1, cosine_decay_power=2.0):
         super().__init__()
 
         self.embedding_dim = embedding_dim
         self.hidden_dim = hidden_dim
         self.user_guidance_scale = user_guidance_scale
         self.guidance_decay_power = guidance_decay_power
+        self.cosine_guidance_scale = cosine_guidance_scale
+        self.cosine_decay_power = cosine_decay_power
 
         # 时间嵌入层（使用正弦位置编码）
         self.time_embed = nn.Sequential(
@@ -69,13 +102,14 @@ class SimpleVelocityNet(nn.Module):
             nn.Linear(hidden_dim, embedding_dim),
         )
 
-    def forward(self, x, t, conditions, user_prior=None):
+    def forward(self, x, t, conditions, user_prior=None, x_1=None):
         """
         Args:
             x: 当前状态 X_t, shape (batch, embedding_dim)
             t: 时间步, shape (batch, 1)
             conditions: 条件特征（image + text）, shape (batch, condition_dim)
-            user_prior: 用户特定兴趣指导, shape (batch, embedding_dim) [NEW]
+            user_prior: 用户特定兴趣指导, shape (batch, embedding_dim)
+            x_1: 目标状态 X_1, shape (batch, embedding_dim) - 用于计算余弦梯度
 
         Returns:
             velocity: 速度 v(x, t, c), shape (batch, embedding_dim)
@@ -99,13 +133,26 @@ class SimpleVelocityNet(nn.Module):
         # 输出速度
         v = self.output_proj(h)
 
-        # [NEW] 添加用户兴趣先验指导（仅训练模式）
-        if self.training and user_prior is not None:
-            # 时间衰减权重: lambda_1(t) = (1-t)^power
-            lambda_1 = (1 - t) ** self.guidance_decay_power  # shape: (batch, 1)
+        # [NEW] 添加先验知识指导（仅训练模式）
+        if self.training:
+            # 第一项: 用户兴趣先验指导
+            if user_prior is not None:
+                # 时间衰减权重: lambda_1(t) = (1-t)^power
+                lambda_1 = (1 - t) ** self.guidance_decay_power  # shape: (batch, 1)
 
-            # 添加指导项
-            v = v + lambda_1 * self.user_guidance_scale * user_prior
+                # 添加用户先验指导项
+                v = v + lambda_1 * self.user_guidance_scale * user_prior
+
+            # 第二项: 余弦相似度梯度指导
+            if x_1 is not None:
+                # 时间衰减权重: lambda_2(t) = (1-t)^power
+                lambda_2 = (1 - t) ** self.cosine_decay_power  # shape: (batch, 1)
+
+                # 计算余弦相似度梯度
+                cos_grad = cosine_similarity_gradient(x, x_1)
+
+                # 添加余弦梯度指导项
+                v = v + lambda_2 * self.cosine_guidance_scale * cos_grad
 
         return v
 
@@ -165,7 +212,8 @@ class RFExtendedIdGenerator(nn.Module):
     """
 
     def __init__(self, embedding_dim, hidden_dim, n_layers, dropout,
-                 user_guidance_scale=0.2, guidance_decay_power=2.0):
+                 user_guidance_scale=0.2, guidance_decay_power=2.0,
+                 cosine_guidance_scale=0.1, cosine_decay_power=2.0):
         super().__init__()
 
         self.embedding_dim = embedding_dim
@@ -179,6 +227,8 @@ class RFExtendedIdGenerator(nn.Module):
             condition_dim=embedding_dim * 2,  # image + text conditions
             user_guidance_scale=user_guidance_scale,
             guidance_decay_power=guidance_decay_power,
+            cosine_guidance_scale=cosine_guidance_scale,
+            cosine_decay_power=cosine_decay_power,
         )
 
     def rectified_flow_loss(self, target_embeds, image_cond, text_cond, user_prior=None):
@@ -214,8 +264,8 @@ class RFExtendedIdGenerator(nn.Module):
         # 拼接条件（image + text）
         conditions = torch.cat([image_cond, text_cond], dim=-1)
 
-        # [MODIFIED] 预测速度: v(X_t, t, conditions, user_prior)
-        v_pred = self.velocity_net(X_t, t, conditions, user_prior=user_prior)
+        # [MODIFIED] 预测速度: v(X_t, t, conditions, user_prior, X1)
+        v_pred = self.velocity_net(X_t, t, conditions, user_prior=user_prior, x_1=X1)
 
         # 目标速度: X1 - X0（直线方向）
         v_target = X1 - X0
@@ -335,6 +385,17 @@ class RFGUME(GUME):
             config["guidance_decay_power"] if "guidance_decay_power" in config else 2.0
         )
 
+        # 余弦相似度梯度指导参数
+        self.use_cosine_guidance = (
+            config["use_cosine_guidance"] if "use_cosine_guidance" in config else True
+        )
+        self.cosine_guidance_scale = (
+            config["cosine_guidance_scale"] if "cosine_guidance_scale" in config else 0.1
+        )
+        self.cosine_decay_power = (
+            config["cosine_decay_power"] if "cosine_decay_power" in config else 2.0
+        )
+
         if self.use_rf:
             # 使用单个统一的RF生成器处理用户和物品
             self.rf_generator = RFExtendedIdGenerator(
@@ -344,6 +405,8 @@ class RFGUME(GUME):
                 dropout=self.rf_dropout,
                 user_guidance_scale=self.user_guidance_scale,
                 guidance_decay_power=self.guidance_decay_power,
+                cosine_guidance_scale=self.cosine_guidance_scale,
+                cosine_decay_power=self.cosine_decay_power,
             )
 
             # RF独立优化器
@@ -354,15 +417,21 @@ class RFGUME(GUME):
             # 用于控制每个epoch只打印一次日志
             self._rf_logged_this_epoch = False
 
+            # 用于存储上一个epoch生成的embeddings（用于余弦梯度计算）
+            # 初始化为 None，第一次训练时会被初始化
+            self.prev_generated_embeds = None
+
             print(
                 f"RF-GUME initialized: "
                 f"hidden_dim={self.rf_hidden_dim}, n_layers={self.rf_n_layers}, "
                 f"sampling_steps={self.rf_sampling_steps}, "
                 f"warmup_epochs={self.rf_warmup_epochs}, "
                 f"rf_lr={self.rf_learning_rate}, "
-                f"mix_ratio(train/infer)={self.rf_mix_ratio}/{self.rf_inference_mix_ratio}, "
-                f"user_guidance={self.use_user_guidance}, "
-                f"guidance_scale={self.user_guidance_scale}, decay_power={self.guidance_decay_power}"
+                f"mix_ratio(train/infer)={self.rf_mix_ratio}/{self.rf_inference_mix_ratio}\n"
+                f"  User guidance: enabled={self.use_user_guidance}, "
+                f"scale={self.user_guidance_scale}, decay={self.guidance_decay_power}\n"
+                f"  Cosine guidance: enabled={self.use_cosine_guidance}, "
+                f"scale={self.cosine_guidance_scale}, decay={self.cosine_decay_power}"
             )
 
     def set_epoch(self, epoch):
