@@ -291,15 +291,54 @@ class GUME(GeneralRecommender):
 
         return mf_loss, reg_loss
 
-    def InfoNCE(self, view1, view2, temperature):
-        view1, view2 = F.normalize(view1, dim=1), F.normalize(view2, dim=1)
-        pos_score = (view1 * view2).sum(dim=-1)
-        pos_score = torch.exp(pos_score / temperature)
-        ttl_score = torch.matmul(view1, view2.transpose(0, 1))
-        ttl_score = torch.exp(ttl_score / temperature).sum(dim=1)
-        cl_loss = -torch.log(pos_score / ttl_score)
+    def InfoNCE(self, view1, view2, temperature, chunk_size=4096):
+        """
+        分块计算InfoNCE损失，避免显存溢出
         
-        return torch.mean(cl_loss)
+        Args:
+            view1: [N, D] 第一个视图的embeddings
+            view2: [N, D] 第二个视图的embeddings  
+            temperature: 温度参数
+            chunk_size: 每次处理的样本数量
+        """
+        view1, view2 = F.normalize(view1, dim=1), F.normalize(view2, dim=1)
+        n_samples = view1.size(0)
+        
+        # 如果样本数较小，使用原始方法
+        if n_samples <= chunk_size:
+            pos_score = (view1 * view2).sum(dim=-1)
+            pos_score = torch.exp(pos_score / temperature)
+            ttl_score = torch.matmul(view1, view2.transpose(0, 1))
+            ttl_score = torch.exp(ttl_score / temperature).sum(dim=1)
+            cl_loss = -torch.log(pos_score / ttl_score)
+            return torch.mean(cl_loss)
+        
+        # 分块计算
+        cl_loss_sum = 0.0
+        
+        for i in range(0, n_samples, chunk_size):
+            end_i = min(i + chunk_size, n_samples)
+            view1_chunk = view1[i:end_i]  # [chunk_size, D]
+            
+            # 正样本得分（对角线元素）
+            pos_score = (view1_chunk * view2[i:end_i]).sum(dim=-1)  # [chunk_size]
+            pos_score = torch.exp(pos_score / temperature)
+            
+            # 分块计算负样本得分总和
+            ttl_score = torch.zeros(end_i - i, device=view1.device)
+            for j in range(0, n_samples, chunk_size):
+                end_j = min(j + chunk_size, n_samples)
+                view2_chunk = view2[j:end_j]  # [chunk_size, D]
+                
+                # 计算当前块的相似度 [chunk_i, chunk_j]
+                sim_chunk = torch.matmul(view1_chunk, view2_chunk.transpose(0, 1))
+                ttl_score += torch.exp(sim_chunk / temperature).sum(dim=1)
+            
+            # 计算当前块的损失
+            chunk_loss = -torch.log(pos_score / ttl_score)
+            cl_loss_sum += chunk_loss.sum()
+        
+        return cl_loss_sum / n_samples
 
     def calculate_loss(self, interaction):
         users = interaction[0]

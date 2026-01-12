@@ -17,6 +17,7 @@ dependencies = [
     "torch-scatter==2.1.1",  # 显式指定这个版本
     "wandb>=0.23.1",
     "scikit-learn>=1.6.1",
+    "accelerate>=1.12.0",
 ]
 
 
