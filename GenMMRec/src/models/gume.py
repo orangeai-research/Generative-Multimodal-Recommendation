@@ -164,7 +164,7 @@ class GUME(GeneralRecommender):
         sim_cols = torch.tensor(sim_cols)
         sim_values = [1]*len(sim_rows)
 
-        item_adj = sp.coo_matrix((sim_values, (sim_rows, sim_cols)), shape=(self.n_items,self.n_items), dtype=np.int)
+        item_adj = sp.coo_matrix((sim_values, (sim_rows, sim_cols)), shape=(self.n_items,self.n_items), dtype=np.int64)
         return item_adj
     
     def pre_epoch_processing(self):
@@ -339,6 +339,16 @@ class GUME(GeneralRecommender):
             cl_loss_sum += chunk_loss.sum()
         
         return cl_loss_sum / n_samples
+      
+    def InfoNCE2(self, view1, view2, temperature):
+        view1, view2 = F.normalize(view1, dim=1), F.normalize(view2, dim=1)
+        pos_score = (view1 * view2).sum(dim=-1)
+        pos_score = torch.exp(pos_score / temperature)
+        ttl_score = torch.matmul(view1, view2.transpose(0, 1))
+        ttl_score = torch.exp(ttl_score / temperature).sum(dim=1)
+        cl_loss = -torch.log(pos_score / ttl_score)
+        
+        return torch.mean(cl_loss)
 
     def calculate_loss(self, interaction):
         users = interaction[0]
