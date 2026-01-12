@@ -251,6 +251,9 @@ class Trainer(AbstractTrainer):
         for epoch_idx in range(self.start_epoch, self.epochs):
             # train
             training_start_time = time()
+            # 通知模型当前epoch（用于RF warmup等）
+            if hasattr(self.model, "set_epoch"):
+                self.model.set_epoch(epoch_idx)
             self.model.pre_epoch_processing()
             train_loss, _ = self._train_epoch(train_data, epoch_idx)
             if torch.is_tensor(train_loss):
@@ -791,4 +794,3 @@ class GenRecV1Trainer(DiffMMTrainer):
         
         self.logger.info(f"Diffusion Loss: {epDiLoss_image/steps:.4f}")
         return rec_loss, loss_batches
-
