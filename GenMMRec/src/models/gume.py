@@ -310,10 +310,10 @@ class GUME(GeneralRecommender):
             pos_score = torch.exp(pos_score / temperature)
             ttl_score = torch.matmul(view1, view2.transpose(0, 1))
             ttl_score = torch.exp(ttl_score / temperature).sum(dim=1)
-            cl_loss = -torch.log(pos_score / ttl_score)
+            cl_loss = -torch.log(pos_score / ttl_score + 1e-8)  # 添加数值稳定性
             return torch.mean(cl_loss)
         
-        # 分块计算
+        # 分块计算 - 优化显存使用
         cl_loss_sum = 0.0
         
         for i in range(0, n_samples, chunk_size):
@@ -332,11 +332,18 @@ class GUME(GeneralRecommender):
                 
                 # 计算当前块的相似度 [chunk_i, chunk_j]
                 sim_chunk = torch.matmul(view1_chunk, view2_chunk.transpose(0, 1))
-                ttl_score += torch.exp(sim_chunk / temperature).sum(dim=1)
+                sim_exp = torch.exp(sim_chunk / temperature)
+                ttl_score += sim_exp.sum(dim=1)
+                
+                # 立即释放中间变量
+                del sim_chunk, sim_exp
             
             # 计算当前块的损失
-            chunk_loss = -torch.log(pos_score / ttl_score)
+            chunk_loss = -torch.log(pos_score / ttl_score + 1e-8)  # 添加数值稳定性
             cl_loss_sum += chunk_loss.sum()
+            
+            # 释放当前块的变量
+            del view1_chunk, pos_score, ttl_score, chunk_loss
         
         return cl_loss_sum / n_samples
       

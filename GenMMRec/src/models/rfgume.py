@@ -24,7 +24,8 @@ def cosine_similarity_gradient(x_t, x_1):
         grad: 余弦相似度的梯度, shape (batch, embedding_dim)
     """
     # 计算余弦相似度
-    cos_sim = F.cosine_similarity(x_t, x_1, dim=-1, keepdim=True)  # (batch, 1)
+    cos_sim = F.cosine_similarity(x_t, x_1, dim=-1)  # (batch,)
+    cos_sim = cos_sim.unsqueeze(-1)  # (batch, 1)
 
     # 计算范数
     x_t_norm = x_t.norm(dim=-1, keepdim=True)  # (batch, 1)
@@ -353,6 +354,11 @@ class RFGUME(GUME):
             config["rf_contrast_temp"] if "rf_contrast_temp" in config else 0.2
         )
 
+        # 对比损失权重参数
+        self.rf_loss_weight = (
+            config["rf_loss_weight"] if "rf_loss_weight" in config else 1.0
+        )
+
         # RF Warmup: 前 N 个 epoch 不启用 RF，先让 GUME 收敛
         self.rf_warmup_epochs = (
             config["rf_warmup_epochs"] if "rf_warmup_epochs" in config else 0
@@ -533,11 +539,10 @@ class RFGUME(GUME):
             )
 
             # 对比损失：约束RF生成的向量接近原始目标向量
-            # 使用MSE损失作为简单有效的约束
             cl_loss = self.InfoNCE(rf_generated_embeds, target_detached, self.rf_contrast_temp)
 
-            # 总RF损失 = 速度场损失 + MSE约束
-            total_rf_loss = rf_loss + cl_loss
+            # 总RF损失 = 速度场损失 + 加权对比约束
+            total_rf_loss = rf_loss + self.rf_loss_weight * cl_loss
 
             # RF独立反向传播和参数更新
             self.rf_optimizer.zero_grad()
