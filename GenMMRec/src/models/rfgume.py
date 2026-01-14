@@ -158,8 +158,7 @@ class RFGUME(GUME):
             if not self._rf_logged_this_epoch:
                 print(
                     f"  [RF Train] epoch={self.rf_generator.current_epoch}, "
-                    f"rf_loss={loss_dict['rf_loss']:.6f}, "
-                    f"cl_loss={loss_dict['cl_loss']:.6f}"
+                    f"rf_loss={loss_dict['rf_loss']:.6f}"
                 )
                 self._rf_logged_this_epoch = True
 
@@ -240,6 +239,8 @@ class RFGUME(GUME):
                 "extended_it_embeds": extended_it_embeds,
                 "explicit_image_embeds": explicit_image_embeds,
                 "explicit_text_embeds": explicit_text_embeds,
+                "rf_embeds": rf_embeds,
+                "extended_id_embeds_target": extended_id_embeds_target,
             }
 
             return all_embeds, other_outputs
@@ -332,8 +333,20 @@ class RFGUME(GUME):
         )
         reg_loss = reg_loss_1 + reg_loss_2
 
-        # 返回GUME损失（RF损失已在forward中独立处理）
-        return bpr_loss + al_loss + um_loss + reg_loss
+        # RF contrastive loss (cl_loss)
+        rf_cl_loss = 0.0
+        if self.is_rf_active():
+            rf_embeds = other_outputs["rf_embeds"]
+            target_embeds = other_outputs["extended_id_embeds_target"]
+
+            rf_users, rf_items = torch.split(rf_embeds, [self.n_users, self.n_items], dim=0)
+            target_users, target_items = torch.split(target_embeds, [self.n_users, self.n_items], dim=0)
+
+            # cl_loss with pos_items and users indices (using rf_generator._infonce_loss)
+            rf_cl_loss = self.rf_generator._infonce_loss(rf_items[pos_items], target_items[pos_items], 0.2) + \
+                         self.rf_generator._infonce_loss(rf_users[users], target_users[users], 0.2)
+
+        return bpr_loss + al_loss + um_loss + reg_loss + self.rf_generator.contrast_weight * rf_cl_loss
 
     def full_sort_predict(self, interaction):
         """

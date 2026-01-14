@@ -16,25 +16,93 @@ import yaml
 from typing import List, Dict, Any
 
 
-# RFLGMRec 数据集特定配置
-RFLGMREC_DATASET_CONFIGS = {
+# 模型-数据集特定配置
+MODEL_DATASET_CONFIGS = {
+    "RFLGMRec": {
+        "baby": {
+            "n_hyper_layer": 1,
+            "hyper_num": 4,
+            "keep_rate": 0.5,
+            "alpha": 0.3,
+        },
+        "sports": {
+            "n_hyper_layer": 1,
+            "hyper_num": 4,
+            "keep_rate": 0.4,
+            "alpha": 0.6,
+        },
+        "clothing": {
+            "n_hyper_layer": 2,
+            "hyper_num": 64,
+            "keep_rate": 0.2,
+            "alpha": 0.2,
+        },
+    },
+    "RFBM3": {
+        "baby": {
+            "gpu_id": 0,
+            "embedding_size": 64,
+            "feat_embed_dim": 64,
+            "n_layers": 1,
+            "dropout": 0.3,
+            "reg_weight": 0.1,
+            "cl_weight": 2.0,
+            "use_neg_sampling": False,
+        },
+        "sports": {
+            "gpu_id": 0,
+            "embedding_size": 64,
+            "feat_embed_dim": 64,
+            "n_layers": 1,
+            "dropout": 0.5,
+            "reg_weight": 0.1,
+            "cl_weight": 2.0,
+            "use_neg_sampling": False,
+        },
+        "clothing": {
+            "gpu_id": 0,
+            "embedding_size": 64,
+            "feat_embed_dim": 64,
+            "n_layers": 1,
+            "dropout": 0.3,
+            "reg_weight": 0.1,
+            "cl_weight": 2.0,
+            "use_neg_sampling": False,
+        },
+    },
+}
+
+# RFBM3 数据集特定配置
+RFBM3_DATASET_CONFIGS = {
     "baby": {
-        "n_hyper_layer": 1,
-        "hyper_num": 4,
-        "keep_rate": 0.5,
-        "alpha": 0.3,
+        "gpu_id": 0,
+        "embedding_size": 64,
+        "feat_embed_dim": 64,
+        "n_layers": 1,
+        "dropout": 0.3,
+        "reg_weight": 0.1,
+        "cl_weight": 2.0,
+        "use_neg_sampling": False,
     },
     "sports": {
-        "n_hyper_layer": 1,
-        "hyper_num": 4,
-        "keep_rate": 0.4,
-        "alpha": 0.6,
+        "gpu_id": 0,
+        "embedding_size": 64,
+        "feat_embed_dim": 64,
+        "n_layers": 1,
+        "dropout": 0.5,
+        "reg_weight": 0.1,
+        "cl_weight": 2.0,
+        "use_neg_sampling": False,
     },
     "clothing": {
-        "n_hyper_layer": 2,
-        "hyper_num": 64,
-        "keep_rate": 0.2,
-        "alpha": 0.2,
+        "gpu_id": 0,
+        "embedding_size": 64,
+        "feat_embed_dim": 64,
+        "n_layers": 1,
+        "dropout": 0.3,
+        "reg_weight": 0.1,
+        "cl_weight": 2.0,
+        "use_neg_sampling": False,
     },
 }
 
@@ -69,14 +137,18 @@ def restore_config(config_path: str, backup_path: str):
         os.remove(backup_path)
 
 
-def update_rflgmrec_config(dataset: str, config_path: str):
-    """更新RFLGMRec.yaml中的数据集特定参数"""
-    if dataset not in RFLGMREC_DATASET_CONFIGS:
+def update_model_config(model: str, dataset: str, config_path: str):
+    """更新模型配置文件中的数据集特定参数"""
+    if model not in MODEL_DATASET_CONFIGS:
+        return  # 该模型没有数据集特定配置
+
+    model_configs = MODEL_DATASET_CONFIGS[model]
+    if dataset not in model_configs:
         raise ValueError(
-            f"不支持的数据集: {dataset}. 支持: {list(RFLGMREC_DATASET_CONFIGS.keys())}"
+            f"不支持的数据集: {dataset}. 支持: {list(model_configs.keys())}"
         )
 
-    dataset_config = RFLGMREC_DATASET_CONFIGS[dataset]
+    dataset_config = model_configs[dataset]
 
     # 读取配置
     with open(config_path, "r") as f:
@@ -92,7 +164,7 @@ def update_rflgmrec_config(dataset: str, config_path: str):
             config, f, default_flow_style=False, allow_unicode=True, sort_keys=False
         )
 
-    print(f"  [Config] 已更新 RFLGMRec 为 {dataset} 数据集配置:")
+    print(f"  [Config] 已更新 {model} 为 {dataset} 数据集配置:")
     for key, value in dataset_config.items():
         print(f"    {key}: {value}")
 
@@ -124,9 +196,7 @@ def run_training(model: str, dataset: str, config_path: str, use_rf: bool) -> bo
 
     try:
         # 更新配置
-        if model == "RFLGMRec":
-            update_rflgmrec_config(dataset, config_path)
-
+        update_model_config(model, dataset, config_path)
         update_use_rf(config_path, use_rf)
 
         # 运行训练

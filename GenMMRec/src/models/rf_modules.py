@@ -402,35 +402,36 @@ class RFEmbeddingGenerator(nn.Module):
 
     def _infonce_loss(
         self,
-        anchor: torch.Tensor,
-        positive: torch.Tensor,
+        view1: torch.Tensor,
+        view2: torch.Tensor,
         temperature: float,
     ) -> torch.Tensor:
         """
-        Compute InfoNCE contrastive loss.
+        Compute InfoNCE contrastive loss (matching mgcn.py implementation).
 
         Args:
-            anchor: Anchor embeddings
-            positive: Positive embeddings
+            view1: First view embeddings
+            view2: Second view embeddings
             temperature: Temperature parameter
 
         Returns:
             loss: InfoNCE loss
         """
         # Normalize embeddings
-        anchor = F.normalize(anchor, dim=-1)
-        positive = F.normalize(positive, dim=-1)
+        view1, view2 = F.normalize(view1, dim=1), F.normalize(view2, dim=1)
 
-        # Compute similarity matrix
-        logits = torch.mm(anchor, positive.t()) / temperature
+        # Positive score: element-wise product and sum
+        pos_score = (view1 * view2).sum(dim=-1)
+        pos_score = torch.exp(pos_score / temperature)
 
-        # Labels: diagonal elements are positives
-        labels = torch.arange(anchor.shape[0]).to(anchor.device)
+        # Total score: matrix multiplication
+        ttl_score = torch.matmul(view1, view2.transpose(0, 1))
+        ttl_score = torch.exp(ttl_score / temperature).sum(dim=1)
 
-        # Cross-entropy loss
-        loss = F.cross_entropy(logits, labels)
+        # InfoNCE loss
+        cl_loss = -torch.log(pos_score / ttl_score)
 
-        return loss
+        return torch.mean(cl_loss)
 
     def compute_loss_and_step(
         self,
@@ -440,13 +441,10 @@ class RFEmbeddingGenerator(nn.Module):
         epoch: Optional[int] = None,
     ) -> Dict[str, float]:
         """
-        Compute RF loss and execute optimization step.
+        Compute RF velocity field loss and execute optimization step.
 
-        This method:
-        1. Concatenates condition embeddings
-        2. Computes RF velocity field loss
-        3. Computes contrastive loss
-        4. Backpropagates and updates parameters
+        Note: Contrastive loss (cl_loss) is now computed in the main model's
+        calculate_loss method, not here.
 
         Args:
             target_embeds: Target embedding (RF learning target), shape (batch, embedding_dim)
@@ -455,7 +453,7 @@ class RFEmbeddingGenerator(nn.Module):
             epoch: Current epoch (for warmup control)
 
         Returns:
-            loss_dict: {"rf_loss": float, "cl_loss": float, "total_loss": float}
+            loss_dict: {"rf_loss": float}
         """
         # Update epoch if provided
         if epoch is not None:
@@ -470,40 +468,19 @@ class RFEmbeddingGenerator(nn.Module):
         # Ensure velocity_net is in training mode
         self.velocity_net.train()
 
-        # Compute RF loss
+        # Compute RF velocity field loss
         rf_loss = self._rectified_flow_loss(
             target_embeds.detach(),
             conditions_cat.detach(),
             user_prior=user_prior.detach() if user_prior is not None else None,
         )
 
-        # Generate embeddings for contrastive loss
-        with torch.no_grad():
-            generated_embeds = self.generate(conditions, n_steps=self.sampling_steps)
-
-        # Re-enable gradients for contrastive loss computation
-        generated_embeds_for_cl = self.generate(conditions, n_steps=self.sampling_steps)
-
-        # Contrastive loss: constrain RF-generated vectors to be close to target
-        cl_loss = self._infonce_loss(
-            generated_embeds_for_cl,
-            target_embeds.detach(),
-            self.contrast_temp,
-        )
-
-        # Total RF loss = velocity field loss + weighted contrastive constraint
-        total_loss = rf_loss + self.contrast_weight * cl_loss
-
         # RF independent backpropagation and parameter update
         self.optimizer.zero_grad()
-        total_loss.backward()
+        rf_loss.backward()
         self.optimizer.step()
 
-        return {
-            "rf_loss": rf_loss.item(),
-            "cl_loss": cl_loss.item(),
-            "total_loss": total_loss.item(),
-        }
+        return {"rf_loss": rf_loss.item()}
 
     def generate(
         self,

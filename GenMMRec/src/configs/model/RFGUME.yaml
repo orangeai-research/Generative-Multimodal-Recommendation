@@ -31,7 +31,7 @@ rf_dropout: 0.1             # Dropout率
 # rf_learning_rate:  [0.001, 0.002, 0.0001, 0.00001]
 rf_learning_rate: 0.0001     # RF模块独立学习率
 rf_sampling_steps: 10        # ODE采样步数
-rf_loss_weight: [0.1, 0.15, 0.2]         # 对比损失的权重系数
+rf_loss_weight: [0.01, 0.001, 0.0001]         # 对比损失的权重系数
 
 # User Interest Guidance (Prior Knowledge)
 use_user_guidance: True      # 启用用户先验知识指导

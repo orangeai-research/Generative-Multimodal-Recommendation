@@ -55,54 +55,55 @@ class RFLGMRec(LGMRec):
 
         # CGE: collaborative graph embedding
         cge_embs = self.cge()
+        cge_embs_ori = cge_embs.clone()
 
-        # Split user and item CGE
-        u_cge, i_cge = torch.split(cge_embs, [self.n_users, self.n_items], dim=0)
+        # ===== RF Enhancement for full user+item CGE =====
+        rf_outputs = None
 
-        # ===== RF Enhancement for item CGE =====
         if self.use_rf:
-            conditions = []
-
-            # Get modality features
+            # Get modality features (already user+item)
+            full_conditions = []
             if self.v_feat is not None:
                 v_feats = self.mge('v')  # Already aggregated on user-item graph
-                v_feats_item = v_feats[self.n_users:]  # Only take item part
-                conditions.append(v_feats_item)
+                full_conditions.append(v_feats)
 
             if self.t_feat is not None:
                 t_feats = self.mge('t')  # Already aggregated on user-item graph
-                t_feats_item = t_feats[self.n_users:]  # Only take item part
-                conditions.append(t_feats_item)
+                full_conditions.append(t_feats)
 
-            if len(conditions) > 0 and self.training:
-                # RF training
+            if len(full_conditions) > 0 and self.training:
+                # RF training with full user+item CGE embeddings
                 loss_dict = self.rf_generator.compute_loss_and_step(
-                    target_embeds=i_cge.detach(),
-                    conditions=[c.detach() for c in conditions],
+                    target_embeds=cge_embs_ori.detach(),
+                    conditions=[c.detach() for c in full_conditions],
                 )
 
                 if not self._rf_logged_this_epoch:
                     print(f"  [RF Train] epoch={self.rf_generator.current_epoch}, "
-                          f"rf_loss={loss_dict['rf_loss']:.6f}, "
-                          f"cl_loss={loss_dict['cl_loss']:.6f}")
+                          f"rf_loss={loss_dict['rf_loss']:.6f}")
                     self._rf_logged_this_epoch = True
 
-                # Generate and mix
-                rf_embeds = self.rf_generator.generate(conditions)
-                i_cge = self.rf_generator.mix_embeddings(
-                    i_cge, rf_embeds.detach(), training=True
+                # Generate RF embeddings for full user+item space
+                rf_embeds = self.rf_generator.generate(full_conditions)
+
+                # Mix embeddings
+                cge_embs = self.rf_generator.mix_embeddings(
+                    cge_embs_ori, rf_embeds.detach(), training=True
                 )
 
-            elif len(conditions) > 0 and not self.training:
+                # Store rf_outputs for cl_loss in calculate_loss
+                rf_outputs = {
+                    "rf_embeds": rf_embeds,
+                    "target_embeds": cge_embs_ori,
+                }
+
+            elif len(full_conditions) > 0 and not self.training:
                 # Inference mode
                 with torch.no_grad():
-                    rf_embeds = self.rf_generator.generate(conditions)
-                    i_cge = self.rf_generator.mix_embeddings(
-                        i_cge, rf_embeds, training=False
+                    rf_embeds = self.rf_generator.generate(full_conditions)
+                    cge_embs = self.rf_generator.mix_embeddings(
+                        cge_embs_ori, rf_embeds, training=False
                     )
-
-        # Recombine CGE with RF-enhanced item embeddings
-        cge_embs = torch.cat([u_cge, i_cge], dim=0)
 
         # Continue with original LGMRec logic
         if self.v_feat is not None and self.t_feat is not None:
@@ -122,7 +123,51 @@ class RFLGMRec(LGMRec):
             all_embs = lge_embs + self.alpha * F.normalize(ghe_embs)
         else:
             all_embs = cge_embs
+            uv_hyper_embs, iv_hyper_embs, ut_hyper_embs, it_hyper_embs = None, None, None, None
 
         u_embs, i_embs = torch.split(all_embs, [self.n_users, self.n_items], dim=0)
 
-        return u_embs, i_embs, [uv_hyper_embs, iv_hyper_embs, ut_hyper_embs, it_hyper_embs]
+        return u_embs, i_embs, [uv_hyper_embs, iv_hyper_embs, ut_hyper_embs, it_hyper_embs], rf_outputs
+
+    def calculate_loss(self, interaction):
+        ua_embeddings, ia_embeddings, hyper_embeddings, rf_outputs = self.forward()
+
+        users = interaction[0]
+        pos_items = interaction[1]
+        neg_items = interaction[2]
+        u_g_embeddings = ua_embeddings[users]
+        pos_i_g_embeddings = ia_embeddings[pos_items]
+        neg_i_g_embeddings = ia_embeddings[neg_items]
+
+        batch_bpr_loss = self.bpr_loss(u_g_embeddings, pos_i_g_embeddings, neg_i_g_embeddings)
+
+        batch_hcl_loss = 0.0
+        if hyper_embeddings[0] is not None:
+            [uv_embs, iv_embs, ut_embs, it_embs] = hyper_embeddings
+            batch_hcl_loss = self.ssl_triple_loss(uv_embs[users], ut_embs[users], ut_embs) + \
+                             self.ssl_triple_loss(iv_embs[pos_items], it_embs[pos_items], it_embs)
+
+        batch_reg_loss = self.reg_loss(u_g_embeddings, pos_i_g_embeddings, neg_i_g_embeddings)
+
+        loss = batch_bpr_loss + self.cl_weight * batch_hcl_loss + self.reg_weight * batch_reg_loss
+
+        # RF contrastive loss (cl_loss) - split into users and items
+        if self.use_rf and rf_outputs is not None:
+            rf_embeds = rf_outputs["rf_embeds"]
+            target_embeds = rf_outputs["target_embeds"]
+
+            rf_users, rf_items = torch.split(rf_embeds, [self.n_users, self.n_items], dim=0)
+            target_users, target_items = torch.split(target_embeds, [self.n_users, self.n_items], dim=0)
+
+            rf_cl_loss = self.rf_generator._infonce_loss(rf_items[pos_items], target_items[pos_items], 0.2) + \
+                         self.rf_generator._infonce_loss(rf_users[users], target_users[users], 0.2)
+
+            loss = loss + self.rf_generator.contrast_weight * rf_cl_loss
+
+        return loss
+
+    def full_sort_predict(self, interaction):
+        user = interaction[0]
+        user_embs, item_embs, _, _ = self.forward()
+        scores = torch.matmul(user_embs[user], item_embs.T)
+        return scores
