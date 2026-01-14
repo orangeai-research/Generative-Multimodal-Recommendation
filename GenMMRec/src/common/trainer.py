@@ -22,7 +22,6 @@ from logging import getLogger
 
 from utils.utils import get_local_time, early_stopping, dict2str, build_knn_normalized_graph
 from utils.topk_evaluator import TopKEvaluator
-<<<<<<< HEAD
 
 try:
     import wandb
@@ -30,8 +29,6 @@ try:
 except ImportError:
     WANDB_AVAILABLE = False
 
-=======
->>>>>>> b27a56e (add GenRec-V1)
 from common.interest_cluster import MultimodalCluster, InterestDebiase
 
 class AbstractTrainer(object):
@@ -254,9 +251,6 @@ class Trainer(AbstractTrainer):
         for epoch_idx in range(self.start_epoch, self.epochs):
             # train
             training_start_time = time()
-            # 通知模型当前epoch（用于RF warmup等）
-            if hasattr(self.model, "set_epoch"):
-                self.model.set_epoch(epoch_idx)
             self.model.pre_epoch_processing()
             train_loss, _ = self._train_epoch(train_data, epoch_idx)
             if torch.is_tensor(train_loss):
@@ -335,6 +329,9 @@ class Trainer(AbstractTrainer):
                             **{f'best_valid_{k}': v for k, v in valid_result.items()},
                             **{f'best_test_{k}': v for k, v in test_result.items()}
                         })
+                    
+                    if saved:
+                         self._save_checkpoint(epoch_idx)
 
                 if stop_flag:
                     stop_output = '+++++Finished training, best eval result in epoch %d' % \
@@ -343,6 +340,29 @@ class Trainer(AbstractTrainer):
                         self.logger.info(stop_output)
                     break
         return self.best_valid_score, self.best_valid_result, self.best_test_upon_valid
+    
+    def _save_checkpoint(self, epoch):
+        r"""Store the model parameters, the training parameters and the state_dict of the optimizer
+        """
+        checkpoint_dir = self.config['checkpoint_dir']
+        if not os.path.exists(checkpoint_dir):
+            os.makedirs(checkpoint_dir)
+            
+        checkpoint_path = os.path.join(
+            checkpoint_dir,
+            '{}-{}.pth'.format(self.config['model'], self.config['dataset'])
+        )
+        
+        # Save the best model
+        state = {
+            'config': self.config,
+            'epoch': epoch,
+            'state_dict': self.model.state_dict(),
+            'optimizer': self.optimizer.state_dict(),
+            'best_valid_score': self.best_valid_score,
+        }
+        torch.save(state, checkpoint_path)
+        self.logger.info('Saved best model to {}'.format(checkpoint_path))
 
 
     @torch.no_grad()
@@ -797,3 +817,4 @@ class GenRecV1Trainer(DiffMMTrainer):
         
         self.logger.info(f"Diffusion Loss: {epDiLoss_image/steps:.4f}")
         return rec_loss, loss_batches
+
