@@ -11,7 +11,8 @@
 # Weekly Dev Log
 ### News: 本周更新模型如下：
 ## 🚀 **[SOTA GenMMRec Models] **
-- **新增模型**: 2026-01-09优化了GenRecV2模型生成逻辑
+- **新增模型**: 2026-01-24 新增流行度分组评估 (Pop/Niche Group), 冷启动用户评估 (Cold-Start Evaluation),公平性&多样性与长尾指标 (Gini@k, Coverage@k, Tail%@k)评估指标
+gi- **新增模型**: 2026-01-09优化了GenRecV2模型生成逻辑
 - **新增模型**: 2026-01-08新增SIGIR'25 COHESION模型
 - **新增模型**: 2026-01-07新增CIKM'24 GUME图表征学习模型，对齐了DiffMM模型精度
 - **新增模型**: 2026-01-06新增WWW'24 MCDRec生成式模型
@@ -54,6 +55,10 @@ pip install -r requirements.txt
 cd GenMMRec/src
 python main.py --model GenRecV1 --dataset baby
 python main.py --model DiffMM --dataset baby
+python main.py --model GenRecBM3 --dataset baby
+
+python main.py --model VBPR --dataset baby
+
 or
 python run.py --config configs/diffmm.yaml
 ```
