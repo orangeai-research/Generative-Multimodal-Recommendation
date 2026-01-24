@@ -43,6 +43,65 @@ def quick_start(model, dataset, config_dict, save_model=True, mg=False):
     logger.info('\n====Validation====\n' + str(valid_dataset))
     logger.info('\n====Testing====\n' + str(test_dataset))
 
+    # item popularity analysis
+    iid_field = config['ITEM_ID_FIELD']
+    #print("iid_field:", iid_field) # itemID
+    train_df = train_dataset.df
+    # print("train_df:", train_df)
+    item_counts = train_df[iid_field].value_counts() # 默认按计数从高到低降序排序（这是后续能直接取前 20% 的关键），索引为物品 ID，值为对应交互频次。
+    # print("item_counts:", item_counts)
+    '''
+    train_df:         
+            userID  itemID
+    0            0    1587
+    1            0    1879
+    2            0       0
+    5            1    2828
+    6            1    5403
+    ...        ...     ...
+    160783   19443    7032
+    160784   19443    7028
+    160787   19444    7022
+    160788   19444    6959
+    160789   19444    7005
+
+    item_counts: itemID
+    938     554
+    2459    472
+    1431    438
+    303     368
+    2322    348
+    unique_items: [938, 2459, 1431, 303, 2322...]
+    '''
+    unique_items = item_counts.index.tolist() # 提取所有唯一物品 ID，并转为列表格式。 即按交互频次降序排列的物品 ID
+    # print("unique_items:", unique_items) 
+    num_items = len(unique_items) # 唯一物品总数
+    num_pop = int(num_items * 0.2) #  计算主流物品的数量（取唯一物品总数的 20%）。
+    pop_items = set(unique_items[:num_pop]) # 筛选出前 20% 的主流物品ID，并转为集合（set）格式。
+    config['pop_items'] = pop_items # Popular items ID: {1, 4, 9, 10, 14, 22...}
+    # logger.info(f"Popular items: {config['pop_items']}")
+    logger.info(f'Train dataset All Interaction items count: {num_items}, Popular items count: {len(pop_items)}, Niche items count: {num_items - len(pop_items)}')
+    
+    # user cold-start analysis
+    uid_field = config['USER_ID_FIELD']
+    # print("uid_field:", uid_field) # userID
+    user_counts = train_df[uid_field].value_counts() # 每个用户交互的频率
+    cold_start_threshold = 5
+    # Identify WARM users (history > 5)
+    warm_users = user_counts[user_counts > cold_start_threshold].index.tolist()
+    config['warm_users'] = set(warm_users) # 筛选出交互次数>5的用户
+    
+    # Statistics
+    n_warm = len(warm_users)
+    n_total_train_users = len(user_counts)
+    n_cold_in_train = n_total_train_users - n_warm
+
+    #logger.info(f"warm_users: {config['warm_users']}")
+    logger.info(f'User Grouping based on Training History (Threshold={cold_start_threshold}):')
+    logger.info(f'  Warm Users (>5 interactions): {n_warm}')
+    logger.info(f'  Cold Users (<=5 interactions): {n_cold_in_train} (in training set)')
+
+
     # wrap into dataloader
     train_data = TrainDataLoader(config, train_dataset, batch_size=config['train_batch_size'], shuffle=True)
     (valid_data, test_data) = (
