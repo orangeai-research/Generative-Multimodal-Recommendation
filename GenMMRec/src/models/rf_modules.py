@@ -480,10 +480,11 @@ class SimpleVelocityNet(nn.Module):
 
 class RFEmbeddingGenerator(nn.Module):
     """
-    Pluggable Rectified Flow Embedding Generator.
+    Pluggable Rectified Flow Embedding Generator with 2-RF support.
 
     This is the main class for integrating RF into recommendation networks.
-    It provides a clean API for training and inference.
+    It provides a clean API for training and inference, with support for
+    2-Rectified Flow (Reflow) and gradient checkpointing for memory efficiency.
 
     Args:
         embedding_dim: Embedding dimension
@@ -501,10 +502,13 @@ class RFEmbeddingGenerator(nn.Module):
         inference_mix_ratio: Inference mix ratio (default: 0.5)
         contrast_temp: Contrastive loss temperature (default: 0.2)
         contrast_weight: Contrastive loss weight (default: 1.0)
-        cl_loss_in_main: If True, cl_loss is computed in main model's calculate_loss;
-                         If False, cl_loss is computed in compute_loss_and_step (default: True)
-        n_users: Number of users (required if cl_loss_in_main=False)
-        n_items: Number of items (required if cl_loss_in_main=False)
+        n_users: Number of users (required for interaction-based contrastive loss)
+        n_items: Number of items (required for interaction-based contrastive loss)
+        infonce_negative_samples: Number of negative samples for InfoNCE (default: 1024)
+        infonce_batch_size: Batch size for chunked InfoNCE processing (default: 4096)
+        use_2rf: Enable 2-Rectified Flow (Reflow) training (default: True)
+        rf_2rf_transition_epoch: Epoch to transition from 1-RF to 2-RF (default: warmup_epochs + 5)
+        use_gradient_checkpointing: Enable gradient checkpointing to save memory (default: True)
     """
 
     def __init__(
@@ -524,12 +528,16 @@ class RFEmbeddingGenerator(nn.Module):
         inference_mix_ratio: float = 0.5,
         contrast_temp: float = 0.2,
         contrast_weight: float = 1.0,
-        cl_loss_in_main: bool = True,
         n_users: int = 0,
         n_items: int = 0,
         # InfoNCE negative sampling parameters
         infonce_negative_samples: int = 1024,  # Number of negative samples
         infonce_batch_size: int = 4096,        # Batch size for chunked processing
+        # 2-RF parameters
+        use_2rf: bool = True,
+        rf_2rf_transition_epoch: Optional[int] = None,
+        # Memory optimization
+        use_gradient_checkpointing: bool = True,
     ):
         super().__init__()
 
@@ -548,13 +556,28 @@ class RFEmbeddingGenerator(nn.Module):
         self.inference_mix_ratio = inference_mix_ratio
         self.contrast_temp = contrast_temp
         self.contrast_weight = contrast_weight
-        self.cl_loss_in_main = cl_loss_in_main
         self.n_users = n_users
         self.n_items = n_items
 
         # InfoNCE negative sampling parameters
         self.infonce_negative_samples = infonce_negative_samples
         self.infonce_batch_size = infonce_batch_size
+
+        # 2-RF parameters
+        self.use_2rf = use_2rf
+        self.rf_2rf_transition_epoch = rf_2rf_transition_epoch or (warmup_epochs + 5)
+        self.is_2rf_active = False
+
+        # Debug: Print 2-RF configuration
+        print(f"[RF Init] use_2rf={self.use_2rf}, transition_epoch={self.rf_2rf_transition_epoch}, warmup={warmup_epochs}")
+
+        # Cache for 2-RF reflow dataset
+        self.reflow_z0 = None
+        self.reflow_z1 = None
+        self.reflow_conditions = None
+
+        # Memory optimization
+        self.use_gradient_checkpointing = use_gradient_checkpointing
 
         # Will be set when we know the condition dimension
         self.velocity_net = None
@@ -586,6 +609,23 @@ class RFEmbeddingGenerator(nn.Module):
                 self.velocity_net.parameters(),
                 lr=self.learning_rate
             )
+
+    def set_epoch(self, epoch: int):
+        """
+        Update current epoch and handle 1-RF → 2-RF transition.
+
+        Args:
+            epoch: Current training epoch
+        """
+        self.current_epoch = epoch
+
+        # Automatic transition to 2-RF after warmup + stabilization
+        if self.use_2rf and epoch >= self.rf_2rf_transition_epoch and not self.is_2rf_active:
+            self.is_2rf_active = True
+            print(f"\n{'='*60}")
+            print(f"[2-RF] Transitioning to 2-Rectified Flow at epoch {epoch}")
+            print(f"[2-RF] Will use 1-RF outputs as new starting distribution")
+            print(f"{'='*60}\n")
 
     def _rectified_flow_loss(
         self,
@@ -673,84 +713,6 @@ class RFEmbeddingGenerator(nn.Module):
 
         return torch.mean(cl_loss)
 
-    def _infonce_loss_with_negative_sampling(
-        self,
-        view1: torch.Tensor,
-        view2: torch.Tensor,
-        temperature: float,
-        n_negatives: Optional[int] = None,
-        batch_size: Optional[int] = None,
-    ) -> torch.Tensor:
-        """
-        Compute InfoNCE loss with negative sampling and batch processing.
-        Solves memory explosion issue for large-scale data.
-
-        Memory complexity reduced from O(N^2) to O(batch_size * n_negatives).
-
-        Args:
-            view1: First view embeddings [N, D]
-            view2: Second view embeddings [N, D] (positive pairs aligned)
-            temperature: Temperature parameter
-            n_negatives: Number of negative samples per positive (default: self.infonce_negative_samples)
-            batch_size: Batch size for chunked processing (default: self.infonce_batch_size)
-
-        Returns:
-            loss: InfoNCE loss
-        """
-        n_negatives = n_negatives if n_negatives is not None else self.infonce_negative_samples
-        batch_size = batch_size if batch_size is not None else self.infonce_batch_size
-
-        N = view1.size(0)
-        device = view1.device
-
-        # Normalize embeddings
-        view1 = F.normalize(view1, dim=1)
-        view2 = F.normalize(view2, dim=1)
-
-        total_loss = 0.0
-        n_processed = 0
-
-        # Batch processing
-        for i in range(0, N, batch_size):
-            end_i = min(i + batch_size, N)
-            batch_v1 = view1[i:end_i]  # [B, D]
-            batch_v2 = view2[i:end_i]  # [B, D]
-            B = batch_v1.size(0)
-
-            # Positive scores (diagonal elements)
-            pos_score = (batch_v1 * batch_v2).sum(dim=-1) / temperature  # [B]
-
-            # Sample negative indices (from entire view2)
-            neg_indices = torch.randint(0, N, (B, n_negatives), device=device)
-
-            # Ensure negatives don't include self (replace same indices)
-            batch_indices = torch.arange(i, end_i, device=device).unsqueeze(1)
-            mask = (neg_indices == batch_indices)
-            neg_indices = torch.where(mask, (neg_indices + 1) % N, neg_indices)
-
-            # Get negative embeddings [B, n_neg, D]
-            neg_embeds = view2[neg_indices]
-
-            # Compute negative scores [B, n_neg]
-            neg_scores = torch.bmm(
-                batch_v1.unsqueeze(1),        # [B, 1, D]
-                neg_embeds.transpose(1, 2)    # [B, D, n_neg]
-            ).squeeze(1) / temperature        # [B, n_neg]
-
-            # Combine positive and negative scores
-            all_scores = torch.cat([pos_score.unsqueeze(1), neg_scores], dim=1)  # [B, 1+n_neg]
-
-            # Use log_softmax for numerical stability
-            log_probs = F.log_softmax(all_scores, dim=1)
-            batch_loss = -log_probs[:, 0]  # Take log probability of positive sample
-
-            total_loss += batch_loss.sum()
-            n_processed += B
-
-            # Clean up intermediate variables
-            del neg_embeds, neg_scores, all_scores, log_probs, batch_loss
-
-        return total_loss / n_processed
 
     def _infonce_loss_interaction_based(
         self,
@@ -820,27 +782,27 @@ class RFEmbeddingGenerator(nn.Module):
         conditions: List[torch.Tensor],
         user_prior: Optional[torch.Tensor] = None,
         epoch: Optional[int] = None,
-        fixed_noise: Optional[torch.Tensor] = None,
+        batch_users: Optional[torch.Tensor] = None,
+        batch_pos_items: Optional[torch.Tensor] = None,
     ) -> Dict[str, float]:
         """
-        Compute RF velocity field loss and execute optimization step.
+        Compute RF loss and contrastive loss, then optimize.
 
-        If cl_loss_in_main=False, also computes contrastive loss here (split by user/item).
-        If cl_loss_in_main=True, cl_loss is computed in the main model's calculate_loss.
-
-        For 2-RF (Reflow) training:
-        - Pass fixed_noise (Z0) and target_embeds (Z1) from prepare_reflow_dataset()
+        Changes:
+        1. Always compute cl_loss here (removed cl_loss_in_main logic)
+        2. Use _infonce_loss_interaction_based with batch indices
+        3. Support 2-RF via automatic reflow dataset preparation
 
         Args:
             target_embeds: Target embedding (RF learning target), shape (batch, embedding_dim)
             conditions: List of condition embeddings (will be concatenated)
             user_prior: Optional user prior guidance, shape (batch, embedding_dim)
             epoch: Current epoch (for warmup control)
-            fixed_noise: Fixed noise for 2-RF training (from prepare_reflow_dataset).
-                         If None, use random noise (1-RF training).
+            batch_users: Batch user indices for interaction-based InfoNCE, shape (batch_size,)
+            batch_pos_items: Batch positive item indices for interaction-based InfoNCE, shape (batch_size,)
 
         Returns:
-            loss_dict: {"rf_loss": float} or {"rf_loss": float, "cl_loss": float, "total_loss": float}
+            loss_dict: {"rf_loss": float, "cl_loss": float, "total_loss": float, "is_2rf": bool}
         """
         # Update epoch if provided
         if epoch is not None:
@@ -855,63 +817,76 @@ class RFEmbeddingGenerator(nn.Module):
         # Ensure velocity_net is in training mode
         self.velocity_net.train()
 
-        # Compute RF velocity field loss
+        # === 2-RF: Prepare reflow dataset if transitioning ===
+        fixed_noise = None
+        rf_target = target_embeds.detach()
+
+        if self.is_2rf_active:
+            # Generate paired (Z0, Z1) dataset using current 1-RF model
+            # Only regenerate every 5 epochs to reduce overhead
+            if self.reflow_z0 is None or self.current_epoch % 5 == 0:
+                with torch.no_grad():
+                    self.reflow_z0, self.reflow_z1, self.reflow_conditions = \
+                        self.prepare_reflow_dataset(conditions, target_embeds.device)
+
+            # Use 1-RF output (Z1) as new target, fixed noise (Z0) as starting point
+            fixed_noise = self.reflow_z0
+            rf_target = self.reflow_z1
+
+        # === RF Velocity Field Loss ===
         rf_loss = self._rectified_flow_loss(
-            target_embeds.detach(),
+            rf_target,
             conditions_cat.detach(),
             user_prior=user_prior.detach() if user_prior is not None else None,
             fixed_noise=fixed_noise.detach() if fixed_noise is not None else None,
         )
 
-        # If cl_loss_in_main=False, compute cl_loss here (split by user/item to save memory)
-        if not self.cl_loss_in_main:
-            # Generate embeddings for contrastive loss
-            generated_embeds = self.generate(conditions, n_steps=self.sampling_steps)
+        # === Contrastive Loss (always interaction-based) ===
+        # Generate embeddings for contrastive loss
+        start_noise = fixed_noise if self.is_2rf_active else None
+        generated_embeds = self.generate(conditions, n_steps=self.sampling_steps, start_noise=start_noise)
 
-            # Split into users and items to avoid memory explosion
-            gen_users, gen_items = torch.split(generated_embeds, [self.n_users, self.n_items], dim=0)
-            target_users, target_items = torch.split(target_embeds.detach(), [self.n_users, self.n_items], dim=0)
+        # Split into users and items
+        gen_users, gen_items = torch.split(generated_embeds, [self.n_users, self.n_items], dim=0)
+        target_users, target_items = torch.split(rf_target, [self.n_users, self.n_items], dim=0)
 
-            # Compute cl_loss separately for users and items (using negative sampling to save memory)
-            cl_loss_users = self._infonce_loss_with_negative_sampling(gen_users, target_users, self.contrast_temp)
-            cl_loss_items = self._infonce_loss_with_negative_sampling(gen_items, target_items, self.contrast_temp)
-            cl_loss = cl_loss_users + cl_loss_items
+        # Compute interaction-based InfoNCE with batch indices
+        cl_loss = self._infonce_loss_interaction_based(
+            gen_items, target_items, batch_pos_items, self.contrast_temp
+        ) + self._infonce_loss_interaction_based(
+            gen_users, target_users, batch_users, self.contrast_temp
+        )
 
-            # Total RF loss = velocity field loss + weighted contrastive constraint
-            total_loss = rf_loss + self.contrast_weight * cl_loss
+        # === Total Loss and Optimization ===
+        total_loss = rf_loss + self.contrast_weight * cl_loss
 
-            # RF independent backpropagation and parameter update
-            self.optimizer.zero_grad()
-            total_loss.backward()
-            self.optimizer.step()
+        self.optimizer.zero_grad()
+        total_loss.backward()
+        self.optimizer.step()
 
-            return {
-                "rf_loss": rf_loss.item(),
-                "cl_loss": cl_loss.item(),
-                "total_loss": total_loss.item(),
-            }
-        else:
-            # RF independent backpropagation and parameter update (rf_loss only)
-            self.optimizer.zero_grad()
-            rf_loss.backward()
-            self.optimizer.step()
-
-            return {"rf_loss": rf_loss.item()}
+        return {
+            "rf_loss": rf_loss.item(),
+            "cl_loss": cl_loss.item(),
+            "total_loss": total_loss.item(),
+            "is_2rf": self.is_2rf_active,
+        }
 
     def generate(
         self,
         conditions: List[torch.Tensor],
         n_steps: Optional[int] = None,
         start_noise: Optional[torch.Tensor] = None,
+        use_checkpointing: Optional[bool] = None,
     ) -> torch.Tensor:
         """
-        Generate embeddings using ODE sampling.
+        Generate embeddings using ODE sampling with optional gradient checkpointing.
 
         Args:
             conditions: List of condition embeddings (will be concatenated)
             n_steps: ODE sampling steps (None to use default value)
             start_noise: Custom starting noise. If None, use random Gaussian noise.
                          Used by prepare_reflow_dataset() to ensure (Z0, Z1) pairing.
+            use_checkpointing: Enable gradient checkpointing. If None, uses self.use_gradient_checkpointing.
 
         Returns:
             generated_embeds: Generated embeddings
@@ -930,24 +905,46 @@ class RFEmbeddingGenerator(nn.Module):
         if n_steps is None:
             n_steps = self.sampling_steps
 
-        # Start from custom noise or standard Gaussian noise
-        if start_noise is not None:
-            z_0 = start_noise
-        else:
-            z_0 = torch.randn(batch_size, self.embedding_dim).to(device)
-
-        # Solve ODE using Euler method
-        z_t = z_0
-        dt = 1.0 / n_steps
+        # Use default checkpointing setting if not provided
+        if use_checkpointing is None:
+            use_checkpointing = self.use_gradient_checkpointing
 
         # Set to eval mode for inference
         is_training = self.velocity_net.training
         self.velocity_net.eval()
 
+        # Start from custom noise or standard Gaussian noise
+        if start_noise is not None:
+            z_0 = start_noise
+            # Ensure z_0 requires grad during training for proper backpropagation through ODE chain
+            if is_training and not z_0.requires_grad:
+                z_0 = z_0.detach().requires_grad_(True)
+        else:
+            z_0 = torch.randn(batch_size, self.embedding_dim, device=device)
+            # Enable gradient for z_0 during training to allow backprop through ODE chain
+            if is_training:
+                z_0.requires_grad_(True)
+
+        # Solve ODE using Euler method
+        z_t = z_0
+        dt = 1.0 / n_steps
+
         with torch.set_grad_enabled(is_training):
             for i in range(n_steps):
                 t = torch.full((batch_size, 1), i * dt).to(device)
-                v = self.velocity_net(z_t, t, conditions_cat)
+
+                # Use gradient checkpointing during training to save memory
+                if is_training and use_checkpointing:
+                    # Checkpoint trades computation for memory
+                    # Forward pass is computed twice but memory is freed between passes
+                    v = torch.utils.checkpoint.checkpoint(
+                        self.velocity_net,
+                        z_t, t, conditions_cat,
+                        use_reentrant=True  # Use reentrant API for better compatibility
+                    )
+                else:
+                    v = self.velocity_net(z_t, t, conditions_cat)
+
                 z_t = z_t + v * dt
 
         # Restore training mode

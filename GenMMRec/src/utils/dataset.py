@@ -56,8 +56,11 @@ class RecDataset(object):
             cols.append(self.rating_field)
         self.df = pd.read_csv(inter_file, usecols=cols, sep=self.config['field_separator'])
         required_cols = [self.uid_field, self.iid_field, self.splitting_label]
-        if not self.df.columns.isin(required_cols).all():
-            raise ValueError('File {} lost some required columns.'.format(inter_file))
+        missing_cols = [col for col in required_cols if col not in self.df.columns]
+        if missing_cols:
+            raise ValueError(
+                'File {} lost some required columns: {}.'.format(inter_file, ', '.join(missing_cols))
+            )
 
     def split(self):
         dfs = []

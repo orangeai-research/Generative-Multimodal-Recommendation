@@ -32,8 +32,22 @@ class RFFREEDOM(FREEDOM):
                 inference_mix_ratio=config["rf_inference_mix_ratio"] if "rf_inference_mix_ratio" in config else 0.2,
                 contrast_temp=config["rf_contrast_temp"] if "rf_contrast_temp" in config else 0.2,
                 contrast_weight=config["rf_loss_weight"] if "rf_loss_weight" in config else 1.0,
+                n_users=self.n_users,
+                n_items=self.n_items,
+                # 2-RF parameters
+                use_2rf=config["use_2rf"] if "use_2rf" in config else True,
+                rf_2rf_transition_epoch=config["rf_2rf_transition_epoch"] if "rf_2rf_transition_epoch" in config else None,
+                # Memory optimization
+                use_gradient_checkpointing=config["use_gradient_checkpointing"] if "use_gradient_checkpointing" in config else True,
             )
             self._rf_logged_this_epoch = False
+
+            # Store batch indices for RF contrastive loss
+            self._current_batch_users = None
+            self._current_batch_pos_items = None
+
+            # Track training epoch (starts at -1, will be incremented to 0 in first pre_epoch_processing)
+            self._training_epoch = -1
 
         # ===== Denoising Module =====
         self.use_denoise = config["use_denoise"] if "use_denoise" in config else False
@@ -54,6 +68,15 @@ class RFFREEDOM(FREEDOM):
         """Set current epoch for RF generator."""
         if self.use_rf:
             self.rf_generator.set_epoch(epoch)
+            self._rf_logged_this_epoch = False
+
+    def pre_epoch_processing(self):
+        """Called by trainer at the beginning of each epoch."""
+        super().pre_epoch_processing()
+        # Increment epoch counter and update RF generator
+        if self.use_rf:
+            self._training_epoch += 1
+            self.rf_generator.set_epoch(self._training_epoch)
             self._rf_logged_this_epoch = False
 
     def forward(self, adj):
@@ -118,10 +141,16 @@ class RFFREEDOM(FREEDOM):
                 loss_dict = self.rf_generator.compute_loss_and_step(
                     target_embeds=rf_target,
                     conditions=[c.detach() for c in full_conditions],
+                    epoch=self.rf_generator.current_epoch,
+                    # Pass batch interaction indices for interaction-based contrastive loss
+                    batch_users=self._current_batch_users,
+                    batch_pos_items=self._current_batch_pos_items,
                 )
 
                 if not self._rf_logged_this_epoch:
-                    log_msg = f"  [RF Train] epoch={self.rf_generator.current_epoch}, rf_loss={loss_dict['rf_loss']:.6f}"
+                    mode = "2-RF" if loss_dict.get("is_2rf", False) else "1-RF"
+                    log_msg = f"  [{mode} Train] epoch={self.rf_generator.current_epoch}, "
+                    log_msg += f"rf_loss={loss_dict['rf_loss']:.6f}, cl_loss={loss_dict['cl_loss']:.6f}"
                     if self.use_denoise:
                         log_msg += f", ps_loss={ps_loss:.6f}"
                     print(log_msg)
@@ -179,6 +208,10 @@ class RFFREEDOM(FREEDOM):
         pos_items = interaction[1]
         neg_items = interaction[2]
 
+        # Store batch indices for RF contrastive loss
+        self._current_batch_users = users
+        self._current_batch_pos_items = pos_items
+
         ua_embeddings, ia_embeddings, rf_outputs = self.forward(self.masked_adj)
         self.build_item_graph = False
 
@@ -201,22 +234,7 @@ class RFFREEDOM(FREEDOM):
         if self.use_denoise and rf_outputs is not None and "ps_loss" in rf_outputs:
             total_loss = total_loss + self.ps_loss_weight * rf_outputs["ps_loss"]
 
-        # RF contrastive loss (cl_loss) - split into users and items
-        if self.use_rf and rf_outputs is not None:
-            rf_embeds = rf_outputs["rf_embeds"]
-            target_embeds = rf_outputs["target_embeds"]
-
-            rf_users, rf_items = torch.split(rf_embeds, [self.n_users, self.n_items], dim=0)
-            target_users, target_items = torch.split(target_embeds, [self.n_users, self.n_items], dim=0)
-
-            # Use interaction-based InfoNCE
-            rf_cl_loss = self.rf_generator._infonce_loss_interaction_based(
-                rf_items, target_items, pos_items, 0.2
-            ) + self.rf_generator._infonce_loss_interaction_based(
-                rf_users, target_users, users, 0.2
-            )
-
-            total_loss = total_loss + self.rf_generator.contrast_weight * rf_cl_loss
+        # Note: cl_loss is now always computed in rf_modules.py via compute_loss_and_step()
 
         return total_loss
 

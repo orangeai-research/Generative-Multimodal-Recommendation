@@ -34,16 +34,22 @@ use_rf: True
 rf_hidden_dim: 128
 rf_n_layers: 2
 rf_dropout: 0.1
-rf_sampling_steps: 1000
+rf_sampling_steps: 100
 # rf_learning_rate: [0.00005, 0.0001, 0.0003, 0.0005, 0.001]
 # rf_loss_weight: [0.01, 0.001, 0.0001]
 rf_learning_rate: 0.0001
 rf_loss_weight: 0.01
-rf_warmup_epochs: 5
-rf_mix_ratio: 0.1
-rf_inference_mix_ratio: 0.2
+rf_warmup_epochs: 10
+rf_mix_ratio: 0.2
+rf_inference_mix_ratio: 0.3
 rf_contrast_temp: 0.2
-# cl_loss_in_main: False
+
+# 2-RF (Reflow) parameters
+use_2rf: True                   # Enable 2-Rectified Flow
+# rf_2rf_transition_epoch: 10     # Start 2-RF at epoch 10 (default: warmup_epochs + 5)
+
+# Memory optimization
+use_gradient_checkpointing: True # Enable gradient checkpointing to save memory
 
 # Causal denoising parameters (IPW-based)
 use_denoise: False
