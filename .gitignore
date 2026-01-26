@@ -209,6 +209,7 @@ __marimo__/
 *.pdf
 wandb/
 log/*
+.claude/*
 
 # Model checkpoints (should not be committed)
 *.pth
