@@ -170,18 +170,23 @@ def update_model_config(model: str, dataset: str, config_path: str):
 
 
 def update_use_rf(config_path: str, use_rf: bool):
-    """更新配置文件中的use_rf参数"""
+    """更新配置文件中的use_rf参数，当use_rf为False时清空hyper_parameters"""
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
 
     config["use_rf"] = use_rf
 
+    # 当use_rf为False时，清空hyper_parameters（因为RF相关参数不需要调参）
+    if not use_rf:
+        config["hyper_parameters"] = []
+        print(f"  [Config] use_rf = {use_rf}, hyper_parameters = []")
+    else:
+        print(f"  [Config] use_rf = {use_rf}")
+
     with open(config_path, "w") as f:
         yaml.dump(
             config, f, default_flow_style=False, allow_unicode=True, sort_keys=False
         )
-
-    print(f"  [Config] use_rf = {use_rf}")
 
 
 def run_training(model: str, dataset: str, config_path: str, use_rf: bool) -> bool:
