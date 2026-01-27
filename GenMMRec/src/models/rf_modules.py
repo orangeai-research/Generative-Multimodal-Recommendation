@@ -1074,12 +1074,12 @@ class RFEmbeddingGenerator(nn.Module):
         else:
             target_mix_ratio = self.inference_mix_ratio
 
-        # Gradually increase from 0 to target_mix_ratio over progressive_steps epochs
-        if epochs_after_warmup < progressive_steps:
-            mix_ratio = target_mix_ratio * (epochs_after_warmup + 1) / progressive_steps
-        else:
-            mix_ratio = target_mix_ratio
+        # # Gradually increase from 0 to target_mix_ratio over progressive_steps epochs
+        # if epochs_after_warmup < progressive_steps:
+        #     mix_ratio = target_mix_ratio * (epochs_after_warmup + 1) / progressive_steps
+        # else:
+        #     mix_ratio = target_mix_ratio
 
-        mixed_embeds = (1 - mix_ratio) * original_embeds + mix_ratio * generated_embeds
+        mixed_embeds = original_embeds + target_mix_ratio * generated_embeds
 
         return mixed_embeds

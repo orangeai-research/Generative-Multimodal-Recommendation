@@ -69,11 +69,6 @@ class RFBM3(BM3):
             # Load treatment labels from dataset
             self.causal_denoiser.load_treatment_labels(dataset)
 
-    def set_epoch(self, epoch):
-        """Set current epoch for RF generator."""
-        if self.use_rf:
-            self.rf_generator.set_epoch(epoch)
-            self._rf_logged_this_epoch = False
 
     def pre_epoch_processing(self):
         """Called by trainer at the beginning of each epoch."""
