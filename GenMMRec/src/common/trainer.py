@@ -207,17 +207,18 @@ class Trainer(AbstractTrainer):
             #    break
         return total_loss, loss_batches
 
-    def _valid_epoch(self, valid_data):
+    def _valid_epoch(self, valid_data, is_test=False):
         r"""Valid the model with valid data
 
         Args:
             valid_data (DataLoader): the valid data
+            is_test (bool): whether is testing
 
         Returns:
             float: valid score
             dict: valid result
         """
-        valid_result = self.evaluate(valid_data)
+        valid_result = self.evaluate(valid_data, is_test=is_test)
         valid_score = valid_result[self.valid_metric] if self.valid_metric else valid_result['NDCG@20']
         return valid_score, valid_result
 
@@ -297,7 +298,7 @@ class Trainer(AbstractTrainer):
                                      (epoch_idx, valid_end_time - valid_start_time, valid_score)
                 valid_result_output = 'valid result: \n' + dict2str(valid_result)
                 # test
-                _, test_result = self._valid_epoch(test_data)
+                _, test_result = self._valid_epoch(test_data, is_test=True)
                 if verbose:
                     self.logger.info(valid_score_output)
                     self.logger.info(valid_result_output)
