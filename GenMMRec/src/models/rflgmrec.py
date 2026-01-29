@@ -108,6 +108,7 @@ class RFLGMRec(LGMRec):
 
             if len(full_conditions) > 0 and self.training:
                 # ===== Denoising: compute denoised embeddings as RF target =====
+                print("[RFLGMRec] Forward in TRAINING mode")
                 ps_loss = 0.0
                 if self.use_denoise:
                     ego_emb_for_denoise = torch.cat((self.user_embedding.weight,
@@ -176,6 +177,7 @@ class RFLGMRec(LGMRec):
 
             elif len(full_conditions) > 0 and not self.training:
                 # Inference mode
+                print("[RFLGMRec] Forward in INFERENCE mode")
                 n_steps = 10 if self.rf_generator.is_2rf_active else None
 
                 with torch.no_grad():
