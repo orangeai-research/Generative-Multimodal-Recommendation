@@ -1046,6 +1046,9 @@ class RFEmbeddingGenerator(nn.Module):
         Mix original and generated embeddings.
 
         Automatically decides mixing strategy based on warmup status and mix_ratio.
+        
+        **Training mode**: Always returns original embeddings (no mixing).
+        **Inference mode**: Mixes embeddings according to inference_mix_ratio.
 
         Args:
             original_embeds: Original embedding
@@ -1064,22 +1067,11 @@ class RFEmbeddingGenerator(nn.Module):
         if self.current_epoch < self.warmup_epochs:
             return original_embeds
 
-        # Progressive mixing: gradually increase mix_ratio over 10 epochs after warmup
-        # This prevents sudden performance drop when RF embeddings are introduced
-        epochs_after_warmup = self.current_epoch - self.warmup_epochs
-        progressive_steps = 10  # 10 epochs to reach full mix_ratio
-
+        # Training mode: NO mixing, always use original embeddings
         if training:
-            target_mix_ratio = self.train_mix_ratio
-        else:
-            target_mix_ratio = self.inference_mix_ratio
-
-        # # Gradually increase from 0 to target_mix_ratio over progressive_steps epochs
-        # if epochs_after_warmup < progressive_steps:
-        #     mix_ratio = target_mix_ratio * (epochs_after_warmup + 1) / progressive_steps
-        # else:
-        #     mix_ratio = target_mix_ratio
-
-        mixed_embeds = original_embeds + target_mix_ratio * generated_embeds
+            return original_embeds
+        
+        # Inference mode: apply mixing with inference_mix_ratio
+        mixed_embeds = original_embeds + self.inference_mix_ratio * generated_embeds
 
         return mixed_embeds

@@ -123,23 +123,28 @@ class RFCOHESION(COHESION):
             conditions.append(id_rep_squeezed.detach())
 
             # Compute user prior (composite graph deviation)
+            # For COHESION: concatenate priors from all modalities to match total_dim (3*64=192)
             if len(conditions) > 0:
-                # Combine all modality representations
-                combined_modal = sum(conditions) / len(conditions)
+                # Compute prior for each modality separately
+                modality_priors = []
+                for cond in conditions:
+                    # Split user and item embeddings for this modality
+                    user_modal = cond[:self.n_users]
+                    item_modal = cond[self.n_users:]
+                    
+                    # User prior: deviation from average
+                    avg_user_modal = user_modal.mean(dim=0, keepdim=True)
+                    user_prior_modal = user_modal - avg_user_modal
+                    
+                    # Item prior: deviation from average
+                    avg_item_modal = item_modal.mean(dim=0, keepdim=True)
+                    item_prior_modal = item_modal - avg_item_modal
+                    
+                    # Concatenate user and item priors for this modality
+                    modality_priors.append(torch.cat([user_prior_modal, item_prior_modal], dim=0))
                 
-                # Split user and item embeddings
-                user_modal = combined_modal[:self.n_users]
-                item_modal = combined_modal[self.n_users:]
-                
-                # User prior: deviation from user graph neighbors
-                avg_user_modal = user_modal.mean(dim=0, keepdim=True)
-                user_prior = user_modal - avg_user_modal
-                
-                # Item prior: deviation from average item features
-                avg_item_modal = item_modal.mean(dim=0, keepdim=True)
-                item_prior = item_modal - avg_item_modal
-                
-                full_prior = torch.cat([user_prior, item_prior], dim=0)
+                # Concatenate all modality priors to match total_dim
+                full_prior = torch.cat(modality_priors, dim=1)
             else:
                 full_prior = None
 

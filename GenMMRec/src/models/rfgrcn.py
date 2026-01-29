@@ -155,6 +155,9 @@ class RFGRCN(GRCN):
             # Prepare multimodal conditions
             conditions = []
             
+            # ID features (always present)
+            conditions.append(id_rep.detach())
+            
             # Visual features
             if self.v_feat is not None:
                 conditions.append(v_rep.detach())
@@ -163,24 +166,28 @@ class RFGRCN(GRCN):
             if self.t_feat is not None:
                 conditions.append(t_rep.detach())
 
-            # Compute user prior (routing-based preference deviation)
+            # Compute user prior matching total_dim (id + content modalities)
+            # For GRCN: concatenate priors from all modalities to match total_dim
             if len(conditions) > 0:
-                # Combine all modality representations
-                combined_modal = torch.cat(conditions, dim=1) if len(conditions) > 1 else conditions[0]
+                modality_priors = []
+                for cond in conditions:
+                    # Split user and item embeddings for this modality
+                    user_modal = cond[:self.n_users]
+                    item_modal = cond[self.n_users:]
+                    
+                    # User prior: deviation from average
+                    avg_user_modal = user_modal.mean(dim=0, keepdim=True)
+                    user_prior_modal = user_modal - avg_user_modal
+                    
+                    # Item prior: deviation from average
+                    avg_item_modal = item_modal.mean(dim=0, keepdim=True)
+                    item_prior_modal = item_modal - avg_item_modal
+                    
+                    # Concatenate user and item priors for this modality
+                    modality_priors.append(torch.cat([user_prior_modal, item_prior_modal], dim=0))
                 
-                # Split user and item embeddings
-                user_modal = combined_modal[:self.n_users]
-                item_modal = combined_modal[self.n_users:]
-                
-                # User prior: deviation from average user preference
-                avg_user_modal = user_modal.mean(dim=0, keepdim=True)
-                user_prior = user_modal - avg_user_modal
-                
-                # Item prior: deviation from average item features
-                avg_item_modal = item_modal.mean(dim=0, keepdim=True)
-                item_prior = item_modal - avg_item_modal
-                
-                full_prior = torch.cat([user_prior, item_prior], dim=0)
+                # Concatenate all modality priors to match total_dim
+                full_prior = torch.cat(modality_priors, dim=1)
             else:
                 full_prior = None
 
@@ -217,8 +224,9 @@ class RFGRCN(GRCN):
             print(f"[RFGRCN] Forward in INFERENCE mode")
             # Inference mode
             with torch.no_grad():
-                # Prepare multimodal conditions (need to recompute v_rep and t_rep)
+                # Prepare multimodal conditions (same as training mode)
                 conditions = []
+                conditions.append(id_rep)
                 if self.v_feat is not None:
                     conditions.append(v_rep)
                 if self.t_feat is not None:
