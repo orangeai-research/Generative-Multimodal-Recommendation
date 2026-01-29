@@ -19,7 +19,7 @@ import torch_sparse
 from torch_geometric.nn import MessagePassing
 from torch_geometric.utils import remove_self_loops, add_self_loops, degree
 
-from utils_package.utils import (
+from utils.utils import (
 	build_sim, compute_normalized_laplacian, build_knn_neighbourhood,
 	build_knn_normalized_graph
 )

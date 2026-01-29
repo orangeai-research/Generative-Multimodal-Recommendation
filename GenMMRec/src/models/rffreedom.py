@@ -173,6 +173,7 @@ class RFFREEDOM(FREEDOM):
 
         elif self.use_rf and not self.training:
             # Inference mode
+            print("[RFFreedom] Forward in INFERENCE mode")
             with torch.no_grad():
                 image_feats = self.image_trs(self.image_embedding.weight) if self.v_feat is not None else None
                 text_feats = self.text_trs(self.text_embedding.weight) if self.t_feat is not None else None

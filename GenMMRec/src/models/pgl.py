@@ -16,7 +16,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from common.abstract_recommender import GeneralRecommender
-from sparsesvd import sparsesvd
+from scipy.sparse.linalg import svds
 
 
 class PGL(GeneralRecommender):
@@ -137,7 +137,9 @@ class PGL(GeneralRecommender):
 
     def global_subgraph_extraction(self, adj):
         norm_adj = adj.tocsc()
-        ut, s, vt = sparsesvd(norm_adj, self.embedding_dim)
+        # scipy.svds returns (u, s, vt), we need to transpose u to get ut
+        u, s, vt = svds(norm_adj, k=self.embedding_dim)
+        ut = u.T
 
         # Get the top and bottom 25% of singular values
         num_top_bottom = int(0.25 * self.embedding_dim)

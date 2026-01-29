@@ -1,0 +1,35 @@
+embedding_size: 64
+n_layers: 2
+reg_weight: [0, 0.00001, 0.0001, 0.001, 0.01, 0.1]
+learning_rate: 0.001
+
+hyper_parameters: ["reg_weight", "rf_learning_rate", "rf_loss_weight", "rf_inference_mix_ratio"]
+
+# RF enhancement parameters (consistent with RFLGMRec)
+use_rf: True
+rf_hidden_dim: 128
+rf_n_layers: 2
+rf_dropout: 0.1
+rf_sampling_steps: 10
+rf_learning_rate: [0.0001, 0.0003, 0.0005]
+rf_loss_weight: [0.2, 0.4, 0.6]
+rf_warmup_epochs: 20
+rf_mix_ratio: 0
+rf_inference_mix_ratio: [0.02, 0.05, 0.1]
+rf_contrast_temp: 0.1
+
+# 2-RF (Reflow) parameters
+use_2rf: False
+
+# Memory optimization
+use_gradient_checkpointing: True
+
+# Causal denoising parameters (IPW-based)
+use_denoise: True
+clean_rating_threshold: 5.0
+denoise_layers: 2
+ps_loss_weight: 0.1
+
+# Wandb settings
+use_wandb: True
+wandb_project: "GenMMRec_latest_metrics_denoise_gridsearch"

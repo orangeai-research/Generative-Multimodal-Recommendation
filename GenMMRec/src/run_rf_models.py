@@ -40,7 +40,6 @@ MODEL_DATASET_CONFIGS = {
     },
     "RFBM3": {
         "baby": {
-            "gpu_id": 0,
             "embedding_size": 64,
             "feat_embed_dim": 64,
             "n_layers": 1,
@@ -50,7 +49,6 @@ MODEL_DATASET_CONFIGS = {
             "use_neg_sampling": False,
         },
         "sports": {
-            "gpu_id": 0,
             "embedding_size": 64,
             "feat_embed_dim": 64,
             "n_layers": 1,
@@ -60,7 +58,6 @@ MODEL_DATASET_CONFIGS = {
             "use_neg_sampling": False,
         },
         "clothing": {
-            "gpu_id": 0,
             "embedding_size": 64,
             "feat_embed_dim": 64,
             "n_layers": 1,
@@ -70,48 +67,144 @@ MODEL_DATASET_CONFIGS = {
             "use_neg_sampling": False,
         },
     },
+    "RFSMORE": {
+        "baby": {
+            "n_ui_layers": 4,
+            "reg_weight": 1e-4,
+            "cl_loss": 0.01,
+            "image_knn_k": 40,
+            "text_knn_k": 15,
+            "dropout_rate": 0.1,
+        },
+        "sports": {
+            "n_ui_layers": 3,
+            "reg_weight": 1e-4,
+            "cl_loss": 0.03,
+            "image_knn_k": 10,
+            "text_knn_k": 10,
+            "dropout_rate": 0,
+        },
+        "clothing": {
+            "n_ui_layers": 3,
+            "reg_weight": 1e-5,
+            "cl_loss": 0.01,
+            "image_knn_k": 40,
+            "text_knn_k": 10,
+            "dropout_rate": 0,
+        },
+        "microlens": {
+            "n_ui_layers": 3,
+            "reg_weight": 1e-5,
+            "cl_loss": 0.01,
+            "image_knn_k": 40,
+            "text_knn_k": 10,
+            "dropout_rate": 0,
+        },
+    },
+    "RFCOHESION": {
+        "baby": {
+            "reg_weight": 0.0001,
+            "num_layer": 1,
+        },
+        "sports": {
+            "reg_weight": 0.001,
+            "num_layer": 2,
+        },
+        "clothing": {
+            "reg_weight": 0.001,
+            "num_layer": 2,
+        },
+        "microlens": {
+            "reg_weight": 0.001,
+            "num_layer": 2,
+        },
+    },
+    "RFDualGNN": {
+        "baby": {
+            "reg_weight": 0.01,
+        },
+        "sports": {
+            "reg_weight": 0.1,
+        },
+        "clothing": {
+            "reg_weight": 0.1,
+        },
+        "microlens": {
+            "reg_weight": 0.1,
+        },
+    },
+    "RFLATTICE": {
+        "baby": {
+            "reg_weight": 0.001,
+        },
+        "sports": {
+            "reg_weight": 0.0,
+        },
+        "clothing": {
+            "reg_weight": 0.0,
+        },
+        "microlens": {
+            "reg_weight": 0.0,
+        },
+    },
+    "RFMGCN": {
+        "baby": {
+            "cl_loss": 0.001,
+        },
+        "sports": {
+            "cl_loss": 0.01,
+        },
+        "clothing": {
+            "cl_loss": 0.01,
+        },
+        "microlens": {
+            "cl_loss": 0.01,
+        },
+    },
+    "RFGUME": {
+        "baby": {
+            "n_layers": 2,
+            "bm_temp": 0.4,
+            "um_loss": 0.01,
+            "um_temp": 0.1,
+            "vt_loss": 0.1,
+        },
+        "sports": {
+            "n_layers": 1,
+            "bm_temp": 0.2,
+            "um_loss": 0.01,
+            "um_temp": 0.1,
+            "vt_loss": 0.01,
+        },
+        "clothing": {
+            "n_layers": 1,
+            "bm_temp": 0.2,
+            "um_loss": 0.1,
+            "um_temp": 0.2,
+            "vt_loss": 0.001,
+        },
+    },
 }
 
-# RFBM3 数据集特定配置
-RFBM3_DATASET_CONFIGS = {
-    "baby": {
-        "gpu_id": 0,
-        "embedding_size": 64,
-        "feat_embed_dim": 64,
-        "n_layers": 1,
-        "dropout": 0.3,
-        "reg_weight": 0.1,
-        "cl_weight": 2.0,
-        "use_neg_sampling": False,
-    },
-    "sports": {
-        "gpu_id": 0,
-        "embedding_size": 64,
-        "feat_embed_dim": 64,
-        "n_layers": 1,
-        "dropout": 0.5,
-        "reg_weight": 0.1,
-        "cl_weight": 2.0,
-        "use_neg_sampling": False,
-    },
-    "clothing": {
-        "gpu_id": 0,
-        "embedding_size": 64,
-        "feat_embed_dim": 64,
-        "n_layers": 1,
-        "dropout": 0.3,
-        "reg_weight": 0.1,
-        "cl_weight": 2.0,
-        "use_neg_sampling": False,
-    },
-}
-
-# 所有支持的模型和配置文件
+# 所有支持的模型和配置文件（当前优先搜索的模型）
 MODEL_CONFIGS = {
-    "RFLGMRec": "configs/model/RFLGMRec.yaml",
+    "RFVBPR": "configs/model/RFVBPR.yaml",
     "RFBM3": "configs/model/RFBM3.yaml",
     "RFFREEDOM": "configs/model/RFFREEDOM.yaml",
+    "RFMGCN": "configs/model/RFMGCN.yaml",
+    "RFLGMRec": "configs/model/RFLGMRec.yaml",
+    "RFSMORE": "configs/model/RFSMORE.yaml",
+    "RFGUME": "configs/model/RFGUME.yaml",
+    "RFCOHESION": "configs/model/RFCOHESION.yaml",
 }
+
+# 其他 RF 模型（暂时不搜索）
+# MODEL_CONFIGS_LATER = {
+#     "RFMMGCN": "configs/model/RFMMGCN.yaml",
+#     "RFLATTICE": "configs/model/RFLATTICE.yaml",
+#     "RFDualGNN": "configs/model/RFDualGNN.yaml",
+#     "RFPGL": "configs/model/RFPGL.yaml",
+# }
 
 # 支持的数据集
 DATASETS = ["baby", "sports", "clothing", "microlens"]
