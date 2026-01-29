@@ -1,5 +1,4 @@
-is_multimodal_model: True
-########## baby ##########
+#baby
 embedding_size: 64
 feat_embed_dim: 64
 
@@ -7,57 +6,33 @@ n_mm_layers: 1
 n_layers: 2
 knn_k: 10
 mm_image_weight: 0.1
-learning_rate: 0.001 # [0.0010.1, 0.01, 0.001, 0.0001]
-reg_weight: 0.0001 # [0.1, 0.01, 0.001, 0.0001]
+learning_rate: 0.001
+reg_weight: 0.0001
 dropout: 0
-num_layer: 1 #[1, 2, 3, 4]
-# # hyper_parameters: ["reg_weight", "learning_rate", "dropout", "num_layer"]
+num_layer: 1
 
-########## sports ##########
-# embedding_size: 64
-# feat_embed_dim: 64
+# #sports, clothing, microlens
+# reg_weight: 0.001
+# num_layer: 2
 
-# n_mm_layers: 1
-# n_layers: 2
-# knn_k: 10
-# mm_image_weight: 0.1
-# learning_rate: 0.001 # [0.0010.1, 0.01, 0.001, 0.0001]
-# reg_weight: 0.001 # [0.1, 0.01, 0.001, 0.0001]
-# dropout: 0
-# num_layer: 2 #[1, 2, 3, 4]
+# Stage 1: Search rf_loss_weight only
+hyper_parameters: ["rf_loss_weight"]
 
-
-
-
-
-########## clothing ##########
-# embedding_size: 64
-# feat_embed_dim: 64
-
-# n_mm_layers: 1
-# n_layers: 2
-# knn_k: 10
-# mm_image_weight: 0.1
-# learning_rate: 0.001 # [0.0010.1, 0.01, 0.001, 0.0001]
-# reg_weight: 0.001 # [0.1, 0.01, 0.001, 0.0001]
-# dropout: 0
-# num_layer: 2 #[1, 2, 3, 4]\n\n
-# RF enhancement parameters (consistent with RFGUME)
+# RF enhancement parameters (consistent with RFLGMRec)
 use_rf: True
 rf_hidden_dim: 128
 rf_n_layers: 2
 rf_dropout: 0.1
-rf_learning_rate: 0.0001
 rf_sampling_steps: 10
-rf_warmup_epochs: 5
-rf_mix_ratio: 0.1
-rf_inference_mix_ratio: 0.2
-rf_contrast_temp: 0.2
-rf_loss_weight: 1.0
+rf_learning_rate: 0.0003  # Fixed for Stage 1
+rf_loss_weight: [0.2, 0.4, 0.6]  # Stage 1: Search this
+rf_warmup_epochs: 20
+rf_mix_ratio: 0
+rf_inference_mix_ratio: 0.05  # Fixed for Stage 1
+rf_contrast_temp: 0.1
 
 # 2-RF (Reflow) parameters
 use_2rf: False
-rf_2rf_transition_epoch: 20
 
 # Memory optimization
 use_gradient_checkpointing: True
@@ -70,4 +45,4 @@ ps_loss_weight: 0.1
 
 # Wandb settings
 use_wandb: True
-wandb_project: "GenMMRec_RF_Models"
+wandb_project: "GenMMRec_RFCOHESION_SEARCH"

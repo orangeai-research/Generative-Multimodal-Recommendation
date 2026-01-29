@@ -1,4 +1,4 @@
-is_multimodal_model: True
+# PGL 在所有数据集上配置文件一致
 embedding_size: 64
 feat_embed_dim: 64
 weight_size: [64, 64]
@@ -7,34 +7,34 @@ learning_rate_scheduler: [0.96, 50]
 lambda_coeff: 0.9
 learning_rate: 0.001
 
-reg_weight: [0]
+reg_weight: 0
 
 n_mm_layers: 1
 n_ui_layers: 2
 knn_k: 10
 
 mm_image_weight: 0.1
-dropout: [0.2]
+dropout: 0.2
 
-mode: ['local']
+mode: 'local'
 
-hyper_parameters: ["dropout","reg_weight","mode"]
-# RF enhancement parameters (consistent with RFGUME)
+hyper_parameters: ["rf_learning_rate", "rf_loss_weight", "rf_inference_mix_ratio"]
+
+# RF enhancement parameters (consistent with RFLGMRec)
 use_rf: True
 rf_hidden_dim: 128
 rf_n_layers: 2
 rf_dropout: 0.1
-rf_learning_rate: 0.0001
 rf_sampling_steps: 10
-rf_warmup_epochs: 5
-rf_mix_ratio: 0.1
-rf_inference_mix_ratio: 0.2
-rf_contrast_temp: 0.2
-rf_loss_weight: 1.0
+rf_learning_rate: [0.0001, 0.0003, 0.0005]
+rf_loss_weight: [0.2, 0.4, 0.6]
+rf_warmup_epochs: 20
+rf_mix_ratio: 0
+rf_inference_mix_ratio: [0.02, 0.05, 0.1]
+rf_contrast_temp: 0.1
 
 # 2-RF (Reflow) parameters
 use_2rf: False
-rf_2rf_transition_epoch: 20
 
 # Memory optimization
 use_gradient_checkpointing: True
@@ -47,4 +47,4 @@ ps_loss_weight: 0.1
 
 # Wandb settings
 use_wandb: True
-wandb_project: "GenMMRec_RF_Models"
+wandb_project: "GenMMRec_latest_metrics_denoise_gridsearch"

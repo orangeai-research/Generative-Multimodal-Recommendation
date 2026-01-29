@@ -11,6 +11,7 @@ import torch.nn.functional as F
 
 from models.lattice import LATTICE
 from models.rf_modules import RFEmbeddingGenerator, CausalDenoiser
+from utils.utils import build_sim, compute_normalized_laplacian, build_knn_neighbourhood
 
 
 class RFLATTICE(LATTICE):
@@ -295,7 +296,7 @@ class RFLATTICE(LATTICE):
 
         with torch.no_grad():
             if self.use_rf:
-                ua_embeddings, ia_embeddings, _ = self.forward(self.norm_adj, build_item_graph=True)
+                ua_embeddings, ia_embeddings = self.forward(self.norm_adj, build_item_graph=True)
             else:
                 ua_embeddings, ia_embeddings = self.forward(self.norm_adj, build_item_graph=True)
 

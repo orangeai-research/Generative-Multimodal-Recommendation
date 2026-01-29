@@ -108,7 +108,7 @@ class RFDualGNN(DualGNN):
         rf_outputs = None
 
         if self.use_rf and self.training:
-            print(f"[RFDualGNN] Forward in TRAINING mode")
+            # print(f"[RFDualGNN] Forward in TRAINING mode")
             # Combine user and item representations
             all_rep = torch.cat((user_rep_final, item_rep), dim=0)
             
@@ -197,7 +197,7 @@ class RFDualGNN(DualGNN):
 
             rf_outputs = {"ps_loss": ps_loss}
         elif self.use_rf and not self.training:
-            print(f"[RFDualGNN] Forward in INFERENCE mode")
+            # print(f"[RFDualGNN] Forward in INFERENCE mode")
             # Inference mode
             with torch.no_grad():
                 # Combine user and item representations
@@ -268,7 +268,69 @@ class RFDualGNN(DualGNN):
         return total_loss
 
     def full_sort_predict(self, interaction):
-        # Result embed is already computed in forward pass
+        # Compute embeddings with RF enhancement and cache in result_embed
+        with torch.no_grad():
+            # Compute representations
+            representation = None
+            if self.v_feat is not None:
+                self.v_rep, self.v_preference = self.v_gcn(self.edge_index_dropv, self.edge_index, self.v_feat)
+                representation = self.v_rep
+            if self.t_feat is not None:
+                self.t_rep, self.t_preference = self.t_gcn(self.edge_index_dropt, self.edge_index, self.t_feat)
+                if representation is None:
+                    representation = self.t_rep
+                else:
+                    representation += self.t_rep
+
+            # Weighted sum construction
+            if self.construction == 'weighted_sum':
+                if self.v_rep is not None:
+                    self.v_rep = torch.unsqueeze(self.v_rep, 2)
+                    user_rep = self.v_rep[:self.num_user]
+                if self.t_rep is not None:
+                    self.t_rep = torch.unsqueeze(self.t_rep, 2)
+                    user_rep = self.t_rep[:self.num_user]
+                if self.v_rep is not None and self.t_rep is not None:
+                    user_rep = torch.matmul(torch.cat((self.v_rep[:self.num_user], self.t_rep[:self.num_user]), dim=2),
+                                            self.weight_u)
+                user_rep = torch.squeeze(user_rep)
+
+            item_rep = representation[self.num_user:]
+            
+            # User graph aggregation
+            h_u1 = self.user_graph(user_rep, self.epoch_user_graph, self.user_weight_matrix)
+            user_rep_final = user_rep + h_u1
+
+            # Apply RF enhancement if enabled
+            if self.use_rf:
+                # print(f"[RFDualGNN] full_sort_predict in INFERENCE mode")
+                # Combine user and item representations
+                all_rep = torch.cat((user_rep_final, item_rep), dim=0)
+                
+                # Prepare multimodal conditions
+                conditions = []
+                if self.v_feat is not None and self.v_rep is not None:
+                    v_rep_squeezed = torch.squeeze(self.v_rep) if self.v_rep.dim() > 2 else self.v_rep
+                    conditions.append(v_rep_squeezed)
+                if self.t_feat is not None and self.t_rep is not None:
+                    t_rep_squeezed = torch.squeeze(self.t_rep) if self.t_rep.dim() > 2 else self.t_rep
+                    conditions.append(t_rep_squeezed)
+                
+                # Generate RF embeddings and mix
+                rf_embeds = self.rf_generator.generate(conditions)
+                all_rep = self.rf_generator.mix_embeddings(
+                    all_rep,
+                    rf_embeds,
+                    training=False,
+                    epoch=self.rf_generator.current_epoch,
+                )
+                
+                user_rep_final, item_rep = torch.split(all_rep, [self.n_users, self.n_items], dim=0)
+            
+            # Update result_embed with RF-enhanced embeddings
+            self.result_embed = torch.cat((user_rep_final, item_rep), dim=0)
+        
+        # Now use the cached result_embed (same as original DualGNN)
         user_tensor = self.result_embed[:self.n_users]
         item_tensor = self.result_embed[self.n_users:]
 

@@ -85,7 +85,7 @@ class RFCOHESION(COHESION):
         rf_outputs = None
 
         if self.use_rf and train:
-            print(f"[RFCOHESION] Forward in TRAINING mode")
+            # print(f"[RFCOHESION] Forward in TRAINING mode")
             # Combine user and item representations
             all_rep = torch.cat((user_rep, item_rep), dim=0)
             
@@ -180,7 +180,7 @@ class RFCOHESION(COHESION):
 
             rf_outputs = {"ps_loss": ps_loss}
         elif self.use_rf and not self.training:
-            print(f"[RFCOHESION] Forward in INFERENCE mode")
+            # print(f"[RFCOHESION] Forward in INFERENCE mode")
             # Inference mode
             with torch.no_grad():
                 # Combine user and item representations
@@ -252,7 +252,46 @@ class RFCOHESION(COHESION):
         return total_loss
 
     def full_sort_predict(self, interaction):
-        # Result embed is already computed in forward pass
+        # Compute embeddings with RF enhancement and cache in result_embed
+        with torch.no_grad():
+            # Get representation and id_rep_data
+            representation, id_rep_data = self.build_representation()
+            
+            # Get user and item representation
+            user_rep, item_rep = self.process_user_item_representation(representation, id_rep_data)
+            
+            # Apply RF enhancement if enabled
+            if self.use_rf:
+                # print(f"[RFCOHESION] full_sort_predict in INFERENCE mode")
+                # Combine user and item representations
+                all_rep = torch.cat((user_rep, item_rep), dim=0)
+                
+                # Prepare multimodal conditions
+                conditions = []
+                if self.v_rep is not None:
+                    v_rep_squeezed = torch.squeeze(self.v_rep) if self.v_rep.dim() > 2 else self.v_rep
+                    conditions.append(v_rep_squeezed)
+                if self.t_rep is not None:
+                    t_rep_squeezed = torch.squeeze(self.t_rep) if self.t_rep.dim() > 2 else self.t_rep
+                    conditions.append(t_rep_squeezed)
+                id_rep_squeezed = torch.squeeze(id_rep_data) if id_rep_data.dim() > 2 else id_rep_data
+                conditions.append(id_rep_squeezed)
+                
+                # Generate RF embeddings and mix
+                rf_embeds = self.rf_generator.generate(conditions)
+                all_rep = self.rf_generator.mix_embeddings(
+                    all_rep,
+                    rf_embeds,
+                    training=False,
+                    epoch=self.rf_generator.current_epoch,
+                )
+                
+                user_rep, item_rep = torch.split(all_rep, [self.n_users, self.n_items], dim=0)
+            
+            # Update result_embed with RF-enhanced embeddings
+            self.result_embed = torch.cat((user_rep, item_rep), dim=0)
+        
+        # Now use the cached result_embed (same as original COHESION)
         user_tensor = self.result_embed[:self.n_users]
         item_tensor = self.result_embed[self.n_users:]
 

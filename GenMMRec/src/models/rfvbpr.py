@@ -106,19 +106,19 @@ class RFVBPR(VBPR):
                 conditions.append(full_feat.detach())
 
             # Compute user prior (personalized visual preferences)
-            if len(conditions) > 0:
-                # User prior: deviation from average visual preference
-                item_visual_feat = conditions[0][self.n_users:]  # Item visual features
-                avg_visual = item_visual_feat.mean(dim=0, keepdim=True)
-                user_visual = conditions[0][:self.n_users]  # User visual features (currently zeros, could be improved)
-                user_prior = user_visual - avg_visual
-                
-                # Item prior: deviation from average visual features
-                item_prior = item_visual_feat - avg_visual
-                
-                full_prior = torch.cat([user_prior, item_prior], dim=0)
-            else:
-                full_prior = None
+            # Use the actual embeddings to compute prior, not just the visual features
+            user_embeds_for_prior = all_embeddings_ori[:self.n_users]
+            item_embeds_for_prior = all_embeddings_ori[self.n_users:]
+            
+            # User prior: deviation from average
+            avg_user_embed = user_embeds_for_prior.mean(dim=0, keepdim=True)
+            user_prior = user_embeds_for_prior - avg_user_embed
+            
+            # Item prior: deviation from average
+            avg_item_embed = item_embeds_for_prior.mean(dim=0, keepdim=True)
+            item_prior = item_embeds_for_prior - avg_item_embed
+            
+            full_prior = torch.cat([user_prior, item_prior], dim=0)
 
             loss_dict = self.rf_generator.compute_loss_and_step(
                 target_embeds=rf_target,

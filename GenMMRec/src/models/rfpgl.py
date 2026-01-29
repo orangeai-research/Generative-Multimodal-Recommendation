@@ -100,7 +100,7 @@ class RFPGL(PGL):
         rf_outputs = None
 
         if self.use_rf and self.training:
-            print(f"[RFPGL] Forward in TRAINING mode")
+            # print(f"[RFPGL] Forward in TRAINING mode")
             # Combine user and item embeddings
             all_embeds = torch.cat([u_g_embeddings, i_g_embeddings_final], dim=0)
             
@@ -132,25 +132,19 @@ class RFPGL(PGL):
                 conditions.append(full_t_feat.detach())
 
             # Compute user prior (principal graph deviation)
-            if len(conditions) > 0:
-                # Combine all modality features
-                combined_modal = sum(conditions) / len(conditions)
-                
-                # Split user and item features
-                user_modal = combined_modal[:self.n_users]
-                item_modal = combined_modal[self.n_users:]
-                
-                # User prior: deviation from average
-                avg_user_modal = user_modal.mean(dim=0, keepdim=True)
-                user_prior = user_modal - avg_user_modal
-                
-                # Item prior: deviation from average
-                avg_item_modal = item_modal.mean(dim=0, keepdim=True)
-                item_prior = item_modal - avg_item_modal
-                
-                full_prior = torch.cat([user_prior, item_prior], dim=0)
-            else:
-                full_prior = None
+            # Use the actual embeddings to compute prior, not the conditions
+            user_embeds_for_prior = all_embeds[:self.n_users]
+            item_embeds_for_prior = all_embeds[self.n_users:]
+            
+            # User prior: deviation from average
+            avg_user_embed = user_embeds_for_prior.mean(dim=0, keepdim=True)
+            user_prior = user_embeds_for_prior - avg_user_embed
+            
+            # Item prior: deviation from average
+            avg_item_embed = item_embeds_for_prior.mean(dim=0, keepdim=True)
+            item_prior = item_embeds_for_prior - avg_item_embed
+            
+            full_prior = torch.cat([user_prior, item_prior], dim=0)
 
             loss_dict = self.rf_generator.compute_loss_and_step(
                 target_embeds=rf_target,
@@ -184,7 +178,7 @@ class RFPGL(PGL):
 
             rf_outputs = {"ps_loss": ps_loss}
         elif self.use_rf and not self.training:
-            print(f"[RFPGL] Forward in INFERENCE mode")
+            # print(f"[RFPGL] Forward in INFERENCE mode")
             # Inference mode
             with torch.no_grad():
                 # Combine user and item embeddings
