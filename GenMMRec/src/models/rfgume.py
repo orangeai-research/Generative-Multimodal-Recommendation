@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from models.gume import GUME
-from models.rf_modules import RFEmbeddingGenerator
+from models.rf_modules import RFEmbeddingGenerator, CausalDenoiser
 
 
 class RFGUME(GUME):
@@ -22,65 +22,68 @@ class RFGUME(GUME):
     def __init__(self, config, dataset):
         super().__init__(config, dataset)
 
-        # RF相关参数
         self.use_rf = config["use_rf"] if "use_rf" in config else True
 
         if self.use_rf:
-            # 初始化RF生成器
+            # Initialize RF generator with consistent parameters
             self.rf_generator = RFEmbeddingGenerator(
-                # 必需参数
                 embedding_dim=self.embedding_dim,
-
-                # 可选架构参数
-                hidden_dim=config["rf_hidden_dim"] if "rf_hidden_dim" in config else 256,
+                hidden_dim=config["rf_hidden_dim"] if "rf_hidden_dim" in config else 128,
                 n_layers=config["rf_n_layers"] if "rf_n_layers" in config else 2,
                 dropout=config["rf_dropout"] if "rf_dropout" in config else 0.1,
-
-                # 可选训练参数
-                learning_rate=config["rf_learning_rate"] if "rf_learning_rate" in config else 0.001,
+                learning_rate=config["rf_learning_rate"] if "rf_learning_rate" in config else 0.0001,
                 sampling_steps=config["rf_sampling_steps"] if "rf_sampling_steps" in config else 10,
-
-                # 可选高级参数（先验指导）
+                warmup_epochs=config["rf_warmup_epochs"] if "rf_warmup_epochs" in config else 5,
+                train_mix_ratio=config["rf_mix_ratio"] if "rf_mix_ratio" in config else 0.1,
+                inference_mix_ratio=config["rf_inference_mix_ratio"] if "rf_inference_mix_ratio" in config else 0.2,
+                contrast_temp=config["rf_contrast_temp"] if "rf_contrast_temp" in config else 0.2,
+                contrast_weight=config["rf_loss_weight"] if "rf_loss_weight" in config else 1.0,
+                n_users=self.n_users,
+                n_items=self.n_items,
+                # User guidance parameters
                 user_guidance_scale=config["user_guidance_scale"] if "user_guidance_scale" in config else 0.2,
                 guidance_decay_power=config["guidance_decay_power"] if "guidance_decay_power" in config else 2.0,
                 cosine_guidance_scale=config["cosine_guidance_scale"] if "cosine_guidance_scale" in config else 0.1,
                 cosine_decay_power=config["cosine_decay_power"] if "cosine_decay_power" in config else 2.0,
-
-                # 可选策略参数
-                warmup_epochs=config["rf_warmup_epochs"] if "rf_warmup_epochs" in config else 0,
-                train_mix_ratio=config["rf_mix_ratio"] if "rf_mix_ratio" in config else 0.5,
-                inference_mix_ratio=config["rf_inference_mix_ratio"] if "rf_inference_mix_ratio" in config else 0.5,
-                contrast_temp=config["rf_contrast_temp"] if "rf_contrast_temp" in config else 0.2,
-                contrast_weight=config["rf_loss_weight"] if "rf_loss_weight" in config else 1.0,
+                # 2-RF parameters
+                use_2rf=config["use_2rf"] if "use_2rf" in config else False,
+                rf_2rf_transition_epoch=config["rf_2rf_transition_epoch"] if "rf_2rf_transition_epoch" in config else None,
+                # Memory optimization
+                use_gradient_checkpointing=config["use_gradient_checkpointing"] if "use_gradient_checkpointing" in config else True,
             )
-
-            # 用于控制每个epoch只打印一次日志
             self._rf_logged_this_epoch = False
 
-            print(
-                f"RF-GUME initialized with pluggable RF module:\n"
-                f"  Architecture: hidden_dim={self.rf_generator.hidden_dim}, "
-                f"n_layers={self.rf_generator.n_layers}\n"
-                f"  Training: lr={self.rf_generator.learning_rate}, "
-                f"sampling_steps={self.rf_generator.sampling_steps}, "
-                f"warmup_epochs={self.rf_generator.warmup_epochs}\n"
-                f"  Mix ratios: train={self.rf_generator.train_mix_ratio}, "
-                f"inference={self.rf_generator.inference_mix_ratio}\n"
-                f"  User guidance: scale={self.rf_generator.user_guidance_scale}, "
-                f"decay={self.rf_generator.guidance_decay_power}\n"
-                f"  Cosine guidance: scale={self.rf_generator.cosine_guidance_scale}, "
-                f"decay={self.rf_generator.cosine_decay_power}"
+            # Store batch indices for RF contrastive loss
+            self._current_batch_users = None
+            self._current_batch_items = None
+
+            # Track training epoch (starts at -1, will be incremented to 0 in first pre_epoch_processing)
+            self._training_epoch = -1
+
+        # ===== Denoising Module =====
+        self.use_denoise = config["use_denoise"] if "use_denoise" in config else False
+
+        if self.use_denoise:
+            self.ps_loss_weight = config["ps_loss_weight"] if "ps_loss_weight" in config else 0.1
+
+            # Initialize CausalDenoiser
+            self.causal_denoiser = CausalDenoiser(
+                embedding_dim=self.embedding_dim,
+                n_users=self.n_users,
+                n_items=self.n_items,
+                n_layers=config["denoise_layers"] if "denoise_layers" in config else 2,
+                clean_rating_threshold=config["clean_rating_threshold"] if "clean_rating_threshold" in config else 5.0,
+                device=self.device,
             )
+            # Load treatment labels from dataset
+            self.causal_denoiser.load_treatment_labels(dataset)
 
-    def set_epoch(self, epoch):
-        """由 trainer 调用，更新当前 epoch"""
+    def pre_epoch_processing(self):
+        """Called by trainer at the beginning of each epoch."""
         if self.use_rf:
-            self.rf_generator.set_epoch(epoch)
-            self._rf_logged_this_epoch = False  # 重置日志标记
-
-    def is_rf_active(self):
-        """检查 RF 是否已激活"""
-        return self.use_rf
+            self._training_epoch += 1
+            self.rf_generator.set_epoch(self._training_epoch)
+            self._rf_logged_this_epoch = False
 
     def forward(self, adj, train=False):
         """
@@ -127,8 +130,24 @@ class RFGUME(GUME):
         )
 
         # ===== 使用RF生成extended_id_embeds =====
+        rf_outputs = None
+        
         if self.use_rf and train:
             # ===== 训练模式：RF独立训练 =====
+
+            # ===== Denoising: compute denoised embeddings as RF target =====
+            ps_loss = 0.0
+            if self.use_denoise:
+                # Get initial ego embeddings for denoising
+                ego_emb_for_denoise = torch.cat((user_embeds, item_embeds), dim=0)
+                denoised_emb, ps_loss = self.causal_denoiser(ego_emb_for_denoise)
+                if denoised_emb is not None:
+                    # Use denoised embeddings as RF generation target
+                    rf_target = denoised_emb.detach()
+                else:
+                    rf_target = extended_id_embeds_target.detach()
+            else:
+                rf_target = extended_id_embeds_target.detach()
 
             # 计算用户先验（用于RF指导）
             # Z_u: 用户特定的多模态兴趣表示
@@ -148,17 +167,21 @@ class RFGUME(GUME):
 
             # 使用RF生成器计算损失并更新
             loss_dict = self.rf_generator.compute_loss_and_step(
-                target_embeds=extended_id_embeds_target.detach(),
+                target_embeds=rf_target,
                 conditions=[explicit_image_embeds.detach(), explicit_text_embeds.detach()],
                 user_prior=full_prior.detach(),
                 epoch=self.rf_generator.current_epoch,
+                # Pass batch interaction indices for interaction-based contrastive loss
+                batch_users=self._current_batch_users,
+                batch_pos_items=self._current_batch_items,
             )
 
             # 打印RF训练信息（每个epoch只打印一次）
             if not self._rf_logged_this_epoch:
                 print(
                     f"  [RF Train] epoch={self.rf_generator.current_epoch}, "
-                    f"rf_loss={loss_dict['rf_loss']:.6f}"
+                    f"rf_loss={loss_dict['rf_loss']:.6f}, "
+                    f"cl_loss={loss_dict['cl_loss']:.6f}"
                 )
                 self._rf_logged_this_epoch = True
 
@@ -174,6 +197,9 @@ class RFGUME(GUME):
                 training=True,
                 epoch=self.rf_generator.current_epoch,
             )
+            
+            # Store RF outputs for loss computation
+            rf_outputs = {"ps_loss": ps_loss}
 
         elif self.use_rf and not train:
             # ===== 推理模式：使用RF生成并混合 =====
@@ -239,9 +265,10 @@ class RFGUME(GUME):
                 "extended_it_embeds": extended_it_embeds,
                 "explicit_image_embeds": explicit_image_embeds,
                 "explicit_text_embeds": explicit_text_embeds,
-                "rf_embeds": rf_embeds,
-                "extended_id_embeds_target": extended_id_embeds_target,
             }
+            # Merge rf_outputs if available
+            if rf_outputs is not None:
+                other_outputs.update(rf_outputs)
 
             return all_embeds, other_outputs
         elif train and not self.use_rf:
@@ -263,12 +290,16 @@ class RFGUME(GUME):
         Returns:
             total_loss: 总损失
         """
+        # Store batch indices for RF contrastive loss
+        self._current_batch_users = interaction[0]
+        self._current_batch_items = interaction[1]
+        
         users = interaction[0]
         pos_items = interaction[1]
         neg_items = interaction[2]
 
         # 前向传播（RF损失已在forward中独立计算和反向传播）
-        if self.is_rf_active():
+        if self.use_rf:
             embeds_1, other_outputs = self.forward(self.norm_adj, train=True)
 
             integration_embeds = other_outputs["integration_embeds"]
@@ -333,20 +364,15 @@ class RFGUME(GUME):
         )
         reg_loss = reg_loss_1 + reg_loss_2
 
-        # RF contrastive loss (cl_loss)
-        rf_cl_loss = 0.0
-        if self.is_rf_active():
-            rf_embeds = other_outputs["rf_embeds"]
-            target_embeds = other_outputs["extended_id_embeds_target"]
+        total_loss = bpr_loss + al_loss + um_loss + reg_loss
+        
+        # Add propensity score loss if denoising is enabled
+        if self.use_denoise and self.use_rf and "ps_loss" in other_outputs:
+            total_loss = total_loss + self.ps_loss_weight * other_outputs["ps_loss"]
 
-            rf_users, rf_items = torch.split(rf_embeds, [self.n_users, self.n_items], dim=0)
-            target_users, target_items = torch.split(target_embeds, [self.n_users, self.n_items], dim=0)
+        # Note: cl_loss is now always computed in rf_modules.py via compute_loss_and_step()
 
-            # cl_loss with pos_items and users indices (using rf_generator._infonce_loss)
-            rf_cl_loss = self.rf_generator._infonce_loss(rf_items[pos_items], target_items[pos_items], 0.2) + \
-                         self.rf_generator._infonce_loss(rf_users[users], target_users[users], 0.2)
-
-        return bpr_loss + al_loss + um_loss + reg_loss + self.rf_generator.contrast_weight * rf_cl_loss
+        return total_loss
 
     def full_sort_predict(self, interaction):
         """

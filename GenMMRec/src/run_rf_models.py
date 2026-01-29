@@ -114,7 +114,7 @@ MODEL_CONFIGS = {
 }
 
 # 支持的数据集
-DATASETS = ["baby", "sports", "clothing"]
+DATASETS = ["baby", "sports", "clothing", "microlens"]
 
 
 def backup_config(config_path: str) -> str:

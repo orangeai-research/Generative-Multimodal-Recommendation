@@ -51,6 +51,20 @@ rf_warmup_epochs: 5         # 前N个epoch不启用RF，让GUME预热
 # rf_inference_mix_ratio: [0.2, 0.25, 0.3] # 推理时的混合比例
 rf_mix_ratio: 0.1
 rf_inference_mix_ratio: 0.2
+rf_contrast_temp: 0.2        # Contrastive loss temperature
+
+# 2-RF (Reflow) parameters
+use_2rf: False                   # Enable 2-Rectified Flow
+rf_2rf_transition_epoch: 20      # Start 2-RF at epoch 20 (default: warmup_epochs + 5)
+
+# Memory optimization
+use_gradient_checkpointing: True # Enable gradient checkpointing to save memory
+
+# Causal denoising parameters (IPW-based)
+use_denoise: True
+clean_rating_threshold: 5.0
+denoise_layers: 2
+ps_loss_weight: 0.1
 
 
 # ===== Training Settings =====
