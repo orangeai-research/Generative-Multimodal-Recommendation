@@ -11,6 +11,7 @@
 # Weekly Dev Log
 ### News: 本周更新模型如下：
 ## 🚀 **[SOTA GenMMRec Models] **
+- **新增模型**: 2026-01-27新增主流模型最佳超参数配置文件(支持快速实验)
 - **新增模型**: 2026-01-25新增自研MVDiff生成式模型
 - **新增模型**: 2026-01-24 新增流行度分组评估 (Pop/Niche Group), 冷启动用户评估 (Cold-Start Evaluation),公平性&多样性与长尾指标 (Gini@k, Coverage@k, Tail%@k)评估指标
 - **新增模型**: 2026-01-09优化了GenRecV2模型生成逻辑
