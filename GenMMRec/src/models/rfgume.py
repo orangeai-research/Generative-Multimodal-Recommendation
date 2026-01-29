@@ -132,9 +132,9 @@ class RFGUME(GUME):
         # ===== 使用RF生成extended_id_embeds =====
         rf_outputs = None
         
-        if self.use_rf and train:
+        if self.use_rf and self.training:
             # ===== 训练模式：RF独立训练 =====
-
+            print("[RFGUME] Forward in TRAINING mode")
             # ===== Denoising: compute denoised embeddings as RF target =====
             ps_loss = 0.0
             if self.use_denoise:
@@ -203,6 +203,7 @@ class RFGUME(GUME):
 
         elif self.use_rf and not train:
             # ===== 推理模式：使用RF生成并混合 =====
+            print("[RFGUME] Forward in INFERENCE mode")
             with torch.no_grad():
                 rf_embeds = self.rf_generator.generate(
                     [explicit_image_embeds, explicit_text_embeds]

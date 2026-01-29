@@ -127,6 +127,7 @@ class RFBM3(BM3):
                 full_conditions.append(full_t_feat)
 
             if len(full_conditions) > 0 and self.training:
+                print("[RFBM3] Forward in TRAINING mode")
                 # ===== Denoising: compute denoised embeddings as RF target =====
                 ps_loss = 0.0
                 if self.use_denoise:
@@ -218,6 +219,7 @@ class RFBM3(BM3):
 
             elif len(full_conditions) > 0 and not self.training:
                 # Inference mode
+                print("[RFBM3] Forward in INFERENCE mode")
                 with torch.no_grad():
                     rf_embeds = self.rf_generator.generate(full_conditions)
                     all_embeddings_mixed = self.rf_generator.mix_embeddings(
